@@ -28,15 +28,13 @@ function 初期設定() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var rec = getSheet_(ss, SH_REC, REC_HEAD);
   var det = getSheet_(ss, SH_DET, DET_HEAD);
-  rec.setFrozenRows(1);
-  det.setFrozenRows(1);
+  safe_(function () { rec.setFrozenRows(1); });
+  safe_(function () { det.setFrozenRows(1); });
 
-  // 表示形式の設定。シートが「テーブル」になっていると列に型が固定されていて
-  // 設定できないことがあるため、失敗しても処理を止めずに次へ進める
-  safe_(function () { rec.getRange('C2:C').setNumberFormat('@'); });
-  safe_(function () { det.getRange('C2:C').setNumberFormat('@'); });
-  safe_(function () { rec.getRange('B2:B').setNumberFormat('yyyy-mm-dd'); });
-  safe_(function () { det.getRange('B2:B').setNumberFormat('yyyy-mm-dd'); });
+  // ※ データシートへの表示形式（setNumberFormat）の設定は行いません。
+  //    シートが「テーブル」になっていると列の型が固定されており、
+  //    「型付きの列でセルの数値形式を設定することはできません」というエラーになるためです。
+  //    集計は点検日（B列）の期間で行うので、表示形式は結果に影響しません。
 
   // 判定の色分け（総合判定列）
   safe_(function () {
@@ -54,16 +52,22 @@ function 初期設定() {
   // ダッシュボード（数式で自動集計）
   buildDashboard_(ss);
 
-  // 既存データの年月列を作り直す（過去に日付へ自動変換されたものを文字列に戻す）
-  修復_年月列();
+  // 既存データの点検日・年月を正しい形式に揃え直す
+  修復_日付と年月();
 
-  SpreadsheetApp.flush();
   return 'セットアップ完了';
 }
 
-/* 見た目の設定など、失敗しても処理を続けてよいものを包む */
+/* 見た目の設定など、失敗しても処理を続けてよいものを包む。
+   Apps Script はシートへの変更を溜めてから適用するため、
+   ここで flush() して「その場で」適用し、エラーを確実に捕まえる。 */
 function safe_(fn) {
-  try { fn(); } catch (e) { Logger.log('スキップしました: ' + e); }
+  try {
+    fn();
+    SpreadsheetApp.flush();
+  } catch (e) {
+    Logger.log('スキップしました: ' + e);
+  }
 }
 
 /* ============ ダッシュボードの作成 ============ */
@@ -73,8 +77,10 @@ function buildDashboard_(ss) {
   dash.getRange('A1').setValue('工場点検 進捗ダッシュボード').setFontSize(16).setFontWeight('bold');
   dash.getRange('A2').setValue('対象年月');
 
-  // B2 を書式なしテキストにしてから入力する（"2026-08" が日付に変換されるのを防ぐ）
-  dash.getRange('B2').setNumberFormat('@')
+  // B2 を書式なしテキストにしてから入力する（"2026-08" が日付に変換されるのを防ぐ）。
+  // 万一この書式設定ができない場合でも、集計式側で日付・文字列どちらでも読めるようにしてある。
+  safe_(function () { dash.getRange('B2').setNumberFormat('@'); });
+  dash.getRange('B2')
     .setValue(Utilities.formatDate(new Date(), 'JST', 'yyyy-MM'))
     .setBackground('#fff9d6').setFontWeight('bold')
     .setNote('集計したい年月を yyyy-MM 形式（例 2026-08）で入力してください。\n空欄にすると全期間を集計します。');
@@ -99,9 +105,11 @@ function buildDashboard_(ss) {
   dash.getRange('A21').setFormula(q_(SH_REC + '!A:N',
     'select E, count(A) ', 'group by E order by count(A) desc label E \'点検機械\', count(A) \'点検回数\'', 'データなし'));
 
-  dash.setColumnWidth(1, 160);
-  dash.setColumnWidth(3, 320);
-  dash.autoResizeColumns(4, 12);
+  safe_(function () {
+    dash.setColumnWidth(1, 160);
+    dash.setColumnWidth(3, 320);
+    dash.autoResizeColumns(4, 12);
+  });
 }
 
 /* B2 の年月を安全に読み取る式。日付に変換されていても yyyy-MM に直す */
@@ -118,19 +126,59 @@ function q_(range, select, tail, empty) {
   return '=IFERROR(QUERY(' + range + ',"' + select + '"' + whereYm_() + '"' + tail + '",1),"' + empty + '")';
 }
 
-/* ============ 年月列の修復（過去データの作り直し） ============ */
-function 修復_年月列() {
+/* ============ 過去データの修復 ============
+   点検日(B列)を日付データに、年月(C列)を yyyy-MM の文字列に揃え直します。
+   集計が0件になる場合に手動で実行してください。 */
+function 修復_日付と年月() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var msg = [];
   [SH_REC, SH_DET].forEach(function (name) {
     var sh = ss.getSheetByName(name);
     if (!sh || sh.getLastRow() < 2) return;
     var n = sh.getLastRow() - 1;
     var dates = sh.getRange(2, 2, n, 1).getValues();   // B列＝点検日
-    var col = sh.getRange(2, 3, n, 1);                 // C列＝年月
-    safe_(function () { col.setNumberFormat('@'); });  // テーブルの場合は書式を変更できないので飛ばす
-    col.setValues(dates.map(function (d) { return [ymOf_(d[0])]; }));
+    // 点検日を日付データに揃える（文字列のままだと期間での絞り込みが効かない）
+    safe_(function () {
+      sh.getRange(2, 2, n, 1).setValues(dates.map(function (d) { return [toDate_(d[0])]; }));
+    });
+    // 年月を yyyy-MM の文字列に揃える（表示・ピボット用。集計には使いません）
+    safe_(function () {
+      sh.getRange(2, 3, n, 1).setValues(dates.map(function (d) { return [ymOf_(d[0])]; }));
+    });
+    msg.push(name + ' ' + n + '行');
   });
-  return '年月列を修復しました';
+  var out = '修復しました: ' + (msg.join(' / ') || '対象データなし');
+  Logger.log(out);
+  return out;
+}
+
+/* ============ 診断（集計されないときの原因調べ） ============
+   実行後、下部の「実行ログ」に結果が表示されます。 */
+function 診断_データ形式() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var out = ['=== 工場点検アプリ 診断 ==='];
+  [SH_REC, SH_DET].forEach(function (name) {
+    var sh = ss.getSheetByName(name);
+    if (!sh) { out.push(name + '：シートがありません'); return; }
+    var rows = Math.max(0, sh.getLastRow() - 1);
+    out.push('■ ' + name + '：データ ' + rows + ' 行');
+    if (rows > 0) {
+      var v = sh.getRange(2, 1, 1, 3).getValues()[0];
+      out.push('　 点検日(B) = ' + v[1] + '　形式: ' + ((v[1] instanceof Date) ? '日付 ← 正常' : '文字列 ← 要修復'));
+      out.push('　 年月(C)　 = ' + v[2] + '　形式: ' + ((v[2] instanceof Date) ? '日付' : '文字列'));
+    }
+  });
+  var dash = ss.getSheetByName(SH_DASH);
+  if (!dash) out.push('■ ' + SH_DASH + '：シートがありません（初期設定を実行してください）');
+  else {
+    var b2 = dash.getRange('B2').getValue();
+    out.push('■ ' + SH_DASH + '：B2 = ' + b2 + '　形式: ' + ((b2 instanceof Date) ? '日付' : '文字列'));
+    out.push('　 A5の集計結果 = ' + dash.getRange('A5').getDisplayValue());
+  }
+  out.push('点検日が「文字列」と出た場合は 修復_日付と年月 を実行してください。');
+  var text = out.join('\n');
+  Logger.log(text);
+  return text;
 }
 
 function getSheet_(ss, name, head) {
@@ -191,8 +239,7 @@ function saveRecord_(rec) {
   // 既存行があれば上書き（再送・修正に対応）
   var idx = findRow_(recSh, rec.id);
   if (idx > 0) recSh.getRange(idx, 1, 1, row.length).setValues([row]);
-  else { recSh.appendRow(row); idx = recSh.getLastRow(); }
-  setYmText_(recSh, idx, 1, ym);   // 年月が日付に変換されないよう明示的にテキストで入れ直す
+  else recSh.appendRow(row);
 
   // 明細は一旦削除して入れ直し
   deleteDetail_(detSh, rec.id);
@@ -202,20 +249,9 @@ function saveRecord_(rec) {
         i + 1, it.name, JUDGE_LABEL[it.judge] || '未判定', it.value === '' ? '' : it.value,
         it.unit || '', it.note || '', it.photoUrl || '', now];
     });
-    var start = detSh.getLastRow() + 1;
-    detSh.getRange(start, 1, detRows.length, DET_HEAD.length).setValues(detRows);
-    setYmText_(detSh, start, detRows.length, ym);
+    detSh.getRange(detSh.getLastRow() + 1, 1, detRows.length, DET_HEAD.length).setValues(detRows);
   }
   return { ok: true, id: rec.id, photoUrls: photoUrls };
-}
-
-/* 年月列（C列）を書式なしテキストとして入れ直す */
-function setYmText_(sh, startRow, numRows, ym) {
-  var rng = sh.getRange(startRow, 3, numRows, 1);
-  rng.setNumberFormat('@');
-  var vals = [];
-  for (var i = 0; i < numRows; i++) vals.push([ym]);
-  rng.setValues(vals);
 }
 
 function findRow_(sh, id) {
