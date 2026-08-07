@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<meta name="theme-color" content="#0f4c81">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="工場点検">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="css/style.css">
+<title>工場点検アプリ</title>
+</head>
+<body>
+
+<header class="appbar">
+  <button id="btnBack" class="iconbtn hidden" aria-label="戻る">←</button>
+  <h1 id="appTitle">工場点検</h1>
+  <span id="netBadge" class="badge" title="通信状態">●</span>
+  <button id="btnSync" class="iconbtn" aria-label="スプレッドシートへ同期">⇅<span id="pendingDot" class="dot hidden"></span></button>
+</header>
+
+<main id="main">
+
+  <!-- ========== 点検入力 ========== -->
+  <section id="view-inspect" class="view">
+    <div class="card">
+      <div class="field">
+        <label for="inpDate">① 点検実施日</label>
+        <input type="date" id="inpDate">
+      </div>
+      <div class="field">
+        <label for="inpSite">② 点検場所</label>
+        <select id="inpSite"></select>
+      </div>
+      <div class="field">
+        <label for="inpInspector">点検者</label>
+        <input type="text" id="inpInspector" placeholder="氏名" autocomplete="name">
+      </div>
+    </div>
+
+    <h2 class="sect">③ 点検機械を選択</h2>
+    <p class="hint" id="dayHint"></p>
+    <div id="machineGrid" class="grid"></div>
+  </section>
+
+  <!-- ========== 点検項目入力 ========== -->
+  <section id="view-form" class="view hidden">
+    <div class="card sticky-info">
+      <div id="formHead" class="formhead"></div>
+      <div class="field inline">
+        <label for="inpUnit">号機・設備No.</label>
+        <input type="text" id="inpUnit" placeholder="例）1号機（任意）">
+      </div>
+      <div class="bulkrow">
+        <button class="btn ghost sm" data-bulk="OK">すべて「良」</button>
+        <button class="btn ghost sm" data-bulk="NA">すべて「対象外」</button>
+        <button class="btn ghost sm" data-bulk="CLEAR">クリア</button>
+      </div>
+      <div class="progressbar"><div id="formProgress" class="progressfill"></div></div>
+      <div class="progresstext" id="formProgressText">0 / 0 項目</div>
+    </div>
+
+    <div id="itemList"></div>
+
+    <div class="card">
+      <div class="field">
+        <label for="inpNote">備考欄</label>
+        <textarea id="inpNote" rows="4" placeholder="処置内容・部品交換・次回確認事項など"></textarea>
+      </div>
+    </div>
+
+    <div class="actionbar">
+      <button id="btnDelete" class="btn danger ghost hidden">削除</button>
+      <button id="btnSave" class="btn primary">保存する</button>
+    </div>
+  </section>
+
+  <!-- ========== 履歴 ========== -->
+  <section id="view-history" class="view hidden">
+    <div class="card filters">
+      <div class="field inline">
+        <label for="hisMonth">対象月</label>
+        <input type="month" id="hisMonth">
+      </div>
+      <div class="field inline">
+        <label for="hisSite">場所</label>
+        <select id="hisSite"></select>
+      </div>
+      <div class="field inline">
+        <label for="hisStatus">判定</label>
+        <select id="hisStatus">
+          <option value="">すべて</option>
+          <option value="NG">不良あり</option>
+          <option value="CAUTION">要注意あり</option>
+          <option value="OK">良のみ</option>
+        </select>
+      </div>
+      <button id="btnCsv" class="btn ghost sm">CSV出力</button>
+    </div>
+    <div id="historyList"></div>
+  </section>
+
+  <!-- ========== 進捗 ========== -->
+  <section id="view-dash" class="view hidden">
+    <div class="card filters">
+      <div class="field inline">
+        <label for="dashMonth">対象月</label>
+        <input type="month" id="dashMonth">
+      </div>
+      <button id="btnPull" class="btn ghost sm">シートから最新取得</button>
+    </div>
+    <div id="dashStats" class="stats"></div>
+    <h2 class="sect">工場別 点検進捗</h2>
+    <div id="dashSites"></div>
+    <h2 class="sect">点検マトリクス（場所 × 機械）</h2>
+    <p class="hint">〇=良 / △=要注意 / ×=不良 / 空欄=未点検</p>
+    <div class="matrixwrap"><table id="dashMatrix" class="matrix"></table></div>
+    <h2 class="sect">要対応リスト</h2>
+    <div id="dashIssues"></div>
+  </section>
+
+  <!-- ========== 設定 ========== -->
+  <section id="view-settings" class="view hidden">
+    <div class="card">
+      <h2 class="sect first">スプレッドシート連携</h2>
+      <div class="field">
+        <label for="setGas">GAS ウェブアプリURL</label>
+        <input type="url" id="setGas" placeholder="https://script.google.com/macros/s/.../exec">
+        <p class="hint">Google Apps Script を「ウェブアプリ」としてデプロイしたURLを貼り付けてください。手順は README.md を参照。</p>
+      </div>
+      <div class="field">
+        <label for="setInspector">点検者名（既定）</label>
+        <input type="text" id="setInspector" placeholder="氏名">
+      </div>
+      <label class="check"><input type="checkbox" id="setAutoSync"> 保存時に自動でスプレッドシートへ送信</label>
+      <div class="actionbar inline">
+        <button id="btnTest" class="btn ghost">接続テスト</button>
+        <button id="btnSaveSettings" class="btn primary">設定を保存</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2 class="sect first">点検場所の登録</h2>
+      <p class="hint">実際の工場名を入力してください。名称はこの端末内にのみ保存されます（アプリのプログラムには含まれません）。</p>
+      <div id="siteEditor"></div>
+    </div>
+
+    <div class="card">
+      <h2 class="sect first">点検対象設定（進捗率の分母）</h2>
+      <p class="hint">各工場に設置されている機械にチェックを入れてください。</p>
+      <div id="targetEditor"></div>
+    </div>
+
+    <div class="card">
+      <h2 class="sect first">データ</h2>
+      <p class="hint" id="dataInfo"></p>
+      <div class="actionbar inline">
+        <button id="btnExportJson" class="btn ghost sm">バックアップ出力</button>
+        <button id="btnClearSynced" class="btn ghost sm danger">同期済みを端末から削除</button>
+      </div>
+    </div>
+    <p class="ver">工場点検アプリ v1.0</p>
+  </section>
+
+</main>
+
+<nav class="tabbar">
+  <button class="tab active" data-view="inspect"><span>📋</span>点検</button>
+  <button class="tab" data-view="history"><span>🗂️</span>履歴</button>
+  <button class="tab" data-view="dash"><span>📊</span>進捗</button>
+  <button class="tab" data-view="settings"><span>⚙️</span>設定</button>
+</nav>
+
+<div id="toast" class="toast hidden"></div>
+<div id="overlay" class="overlay hidden"><div class="spinner"></div><span id="overlayText"></span></div>
+
+<script src="js/data.js"></script>
+<script src="js/store.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

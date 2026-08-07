@@ -1,0 +1,14 @@
+# Windows / OneDrive が自動生成するファイル
+desktop.ini
+Thumbs.db
+ehthumbs.db
+$RECYCLE.BIN/
+
+# 開発ツールの個人設定（公開しない）
+.claude/settings.local.json
+.claude/github-login.ps1
+
+# エディタ
+.vscode/
+*.swp
+*~
