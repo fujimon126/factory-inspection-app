@@ -96,10 +96,12 @@ function buildDashboard_(ss) {
     'select H, count(A) ', 'group by H label H \'総合判定\', count(A) \'件数\'', 'データなし'));
 
   dash.getRange('G4').setValue('■ 要対応（不良・要注意）項目一覧').setFontWeight('bold');
+  // format B 'yyyy-mm-dd' … これが無いと点検日が日付の内部値（数字）で表示される
   dash.getRange('G5').setFormula(
-    '=IFERROR(QUERY(' + SH_DET + '!A:O,"select B, D, E, F, I, J, M where (J = \'不良\' or J = \'要注意\') "' +
+    '=IFERROR(QUERY(' + SH_DET + '!A:O,"select B, D, E, F, I, J, M, N where (J = \'不良\' or J = \'要注意\') "' +
     andYm_() +
-    '"order by B desc label B \'点検日\', D \'場所\', E \'機械\', F \'号機\', I \'項目\', J \'判定\', M \'所見\'",1),"要対応なし")');
+    '"order by B desc label B \'点検日\', D \'場所\', E \'機械\', F \'号機\', I \'項目\', J \'判定\', M \'所見\', N \'写真\' format B \'yyyy-mm-dd\'",1),"要対応なし")');
+  safe_(function () { dash.getRange('G5:G').setNumberFormat('yyyy-mm-dd'); });
 
   dash.getRange('A20').setValue('■ 機械別 点検回数').setFontWeight('bold');
   dash.getRange('A21').setFormula(q_(SH_REC + '!A:N',
@@ -218,10 +220,11 @@ function saveRecord_(rec) {
   var photoUrls = [];
   items.forEach(function (it, idx) {
     if (it.photo && String(it.photo).indexOf('data:image') === 0) {
-      var url = savePhoto_(it.photo, [rec.date, rec.site, rec.machineName, it.name, idx].join('_'));
-      it.photoUrl = url;
+      var p = savePhoto_(it.photo, [rec.date, rec.site, rec.machineName, it.name, idx].join('_'));
+      it.photoUrl = p.url;
+      it.photoId = p.id;
       it.photo = '';
-      photoUrls.push({ index: idx, url: url });
+      photoUrls.push({ index: idx, url: p.url, id: p.id });
     }
   });
 
@@ -278,8 +281,15 @@ function savePhoto_(dataUrl, name) {
   var folders = DriveApp.getFoldersByName(PHOTO_FOLDER);
   var folder = folders.hasNext() ? folders.next() : DriveApp.createFolder(PHOTO_FOLDER);
   var file = folder.createFile(blob);
-  file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-  return file.getUrl();
+  // リンクを知っている人が閲覧できるようにする（写真を共有するため）。
+  // 組織の共有ポリシーで設定できない場合も、写真の保存自体は成功させる
+  try {
+    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+  } catch (e) {
+    Logger.log('共有設定をスキップしました: ' + e);
+  }
+  var id = file.getId();
+  return { id: id, url: 'https://drive.google.com/file/d/' + id + '/view' };
 }
 
 /* ============ 送信（シート → アプリ） ============ */

@@ -87,6 +87,10 @@ function init() {
   $('#btnExportJson').addEventListener('click', exportJson);
   $('#btnClearSynced').addEventListener('click', clearSynced);
 
+  $('#lbClose').addEventListener('click', closePhoto);
+  $('#lbShare').addEventListener('click', sharePhoto);
+  $('#lightbox').addEventListener('click', ev => { if (ev.target.id === 'lightbox') closePhoto(); });
+
   window.addEventListener('online', () => { updateNet(); if (Store.settings().autoSync) syncNow(false); });
   window.addEventListener('offline', updateNet);
   updateNet();
@@ -210,8 +214,8 @@ function renderItems() {
            <input type="number" inputmode="decimal" step="any" placeholder="測定値" value="${esc(it.value)}" data-num="${i}">
            <span class="unit">${it.unit}</span>
          </div>` : '';
-    const photo = it.photo || it.photoUrl
-      ? `<div class="thumb"><img src="${it.photo || it.photoUrl}" alt="添付写真"><button data-delphoto="${i}">×</button></div>` : '';
+    const photo = Util.hasPhoto(it)
+      ? `<div class="thumb"><img src="${Util.photoSrc(it)}" alt="添付写真"><button data-delphoto="${i}">×</button></div>` : '';
     return `<div class="item ${it.judge ? JUDGE[it.judge].cls : ''}" data-item="${i}">
       <div class="iname"><span class="idx">${i + 1}</span>${esc(it.name)}</div>
       <div class="judges">${jbtns}</div>
@@ -359,6 +363,118 @@ async function pullFromSheet() {
   }
 }
 
+/* ---------------- 写真の表示・共有 ---------------- */
+/* 記録内の写真つき項目を一覧のサムネイルにする */
+function photoStrip(rec) {
+  const withPhoto = (rec.items || []).map((it, i) => ({ it, i })).filter(x => Util.hasPhoto(x.it));
+  if (!withPhoto.length) return '';
+  return '<div class="photos">' + withPhoto.map(x =>
+    `<button class="pthumb" data-photo-rid="${rec.id}" data-photo-i="${x.i}" title="${esc(x.it.name)}">
+       <img src="${Util.photoSrc(x.it)}" alt="${esc(x.it.name)}" loading="lazy">
+       ${x.it.judge === 'NG' ? '<span class="pbadge ng">不良</span>' : x.it.judge === 'CAUTION' ? '<span class="pbadge caution">注意</span>' : ''}
+     </button>`).join('') + '</div>';
+}
+/* サムネイルのタップで拡大表示を開く */
+function bindPhotoStrips(root) {
+  $$(root + ' [data-photo-rid]').forEach(b => b.addEventListener('click', ev => {
+    ev.stopPropagation();
+    openPhoto(b.dataset.photoRid, +b.dataset.photoI);
+  }));
+}
+
+let lightboxTarget = null;
+function openPhoto(rid, idx) {
+  const rec = Store.get(rid);
+  if (!rec) return;
+  const it = rec.items[idx];
+  lightboxTarget = { rec, it };
+  $('#lightboxImg').src = Util.photoSrc(it);
+  const link = Util.photoLink(it);
+  $('#lbOpen').classList.toggle('hidden', !link);
+  if (link) $('#lbOpen').href = link;
+  $('#lightbox').classList.remove('hidden');
+}
+function closePhoto() {
+  $('#lightbox').classList.add('hidden');
+  $('#lightboxImg').src = '';
+  lightboxTarget = null;
+}
+
+/* 写真1枚を共有する。未送信なら画像そのもの、送信済みならリンクを共有 */
+async function sharePhoto() {
+  if (!lightboxTarget) return;
+  const { rec, it } = lightboxTarget;
+  const text = `${Util.fmtDate(rec.date)} ${siteLabel(rec)} ${rec.machineName}${rec.unit ? ' ' + rec.unit : ''}\n`
+    + `${it.name}（${it.judge ? JUDGE[it.judge].label : '未判定'}）${it.note ? '：' + it.note : ''}`;
+  const link = Util.photoLink(it);
+  if (it.photo && navigator.canShare) {
+    const f = Util.dataUrlToFile(it.photo, `${rec.machineName}_${it.name}.jpg`);
+    if (f && navigator.canShare({ files: [f] })) {
+      return doShare({ text, files: [f] });
+    }
+  }
+  if (link) return doShare({ title: '点検写真', text: text + '\n' + link });
+  toast('この写真はまだ送信されていないため、リンクを作成できません', true);
+}
+
+/* 点検記録1件を共有する（要対応の内容と写真リンク） */
+async function shareRecord(rid) {
+  const r = Store.get(rid);
+  if (!r) return;
+  const lines = [
+    `【点検報告】${Util.fmtDate(r.date)}`,
+    `${siteLabel(r)}　${r.machineName}${r.unit ? ' ' + r.unit : ''}`,
+    `点検者：${r.inspector || '－'}　総合判定：${JUDGE[r.status].label}`
+  ];
+  const bad = (r.items || []).filter(i => i.judge === 'NG' || i.judge === 'CAUTION');
+  if (bad.length) {
+    lines.push('', '■ 要対応');
+    bad.forEach(i => lines.push(
+      `・${i.name}（${JUDGE[i.judge].label}）${i.value ? ` ${i.value}${i.unit}` : ''}${i.note ? ' ' + i.note : ''}`));
+  }
+  const nums = (r.items || []).filter(i => i.type === 'num' && i.value);
+  if (nums.length) {
+    lines.push('', '■ 測定値');
+    nums.forEach(i => lines.push(`・${i.name}：${i.value}${i.unit}`));
+  }
+  if (r.note) lines.push('', `備考：${r.note}`);
+
+  const links = (r.items || []).filter(i => Util.photoLink(i));
+  if (links.length) {
+    lines.push('', '■ 写真');
+    links.forEach(i => lines.push(`・${i.name}：${Util.photoLink(i)}`));
+  }
+  const text = lines.join('\n');
+
+  // 未送信の写真は画像ファイルとして直接共有する
+  const files = [];
+  if (navigator.canShare) {
+    (r.items || []).forEach(it => {
+      if (it.photo) {
+        const f = Util.dataUrlToFile(it.photo, `${r.machineName}_${it.name}.jpg`);
+        if (f) files.push(f);
+      }
+    });
+  }
+  if (files.length && navigator.canShare({ files })) return doShare({ text, files });
+  return doShare({ title: '点検報告', text });
+}
+
+async function doShare(data) {
+  try {
+    if (navigator.share) { await navigator.share(data); return; }
+    throw new Error('unsupported');
+  } catch (e) {
+    if (e && e.name === 'AbortError') return;   // ユーザーが共有をキャンセルした
+    try {
+      await navigator.clipboard.writeText(data.text || '');
+      toast('内容をコピーしました。LINEやメールに貼り付けてください');
+    } catch (e2) {
+      toast('共有に対応していない環境です', true);
+    }
+  }
+}
+
 /* ---------------- 履歴 ---------------- */
 function filteredRecords() {
   const ym = $('#hisMonth').value, siteId = $('#hisSite').value, st = $('#hisStatus').value;
@@ -383,10 +499,19 @@ function renderHistory() {
         <div class="t2">${Util.fmtDate(r.date)}　${esc(siteLabel(r))}　${esc(r.inspector || '')}</div>
         ${issue}
         ${r.note ? `<div class="t2">備考：${esc(r.note)}</div>` : ''}
+        ${photoStrip(r)}
       </div>
-      <div class="sync ${r.synced ? '' : 'pend'}">${r.synced ? '送信済' : '未送信'}</div>
+      <div class="side">
+        <div class="sync ${r.synced ? '' : 'pend'}">${r.synced ? '送信済' : '未送信'}</div>
+        <button class="sharebtn" data-share="${r.id}" aria-label="共有">共有</button>
+      </div>
     </div>`;
   }).join('');
+  bindPhotoStrips('#historyList');
+  $$('#historyList [data-share]').forEach(b => b.addEventListener('click', ev => {
+    ev.stopPropagation();
+    shareRecord(b.dataset.share);
+  }));
   $$('#historyList .rec').forEach(el => el.addEventListener('click', () => {
     const r = Store.get(el.dataset.rid);
     $('#inpDate').value = r.date;
@@ -476,15 +601,26 @@ function renderDash() {
 
   // 要対応リスト
   const issues = ngItems.concat(caItems);
-  $('#dashIssues').innerHTML = issues.length ? issues.map(({ r, i }) =>
-    `<div class="rec">
+  $('#dashIssues').innerHTML = issues.length ? issues.map(({ r, i }) => {
+    const idx = r.items.indexOf(i);
+    const photo = Util.hasPhoto(i)
+      ? `<div class="photos"><button class="pthumb" data-photo-rid="${r.id}" data-photo-i="${idx}">
+           <img src="${Util.photoSrc(i)}" alt="${esc(i.name)}" loading="lazy"></button></div>` : '';
+    return `<div class="rec">
       <div class="stat ${JUDGE[i.judge].cls}">${JUDGE[i.judge].label[0]}</div>
       <div class="body">
         <div class="t1">${esc(i.name)}</div>
         <div class="t2">${Util.fmtDate(r.date)}　${esc(siteLabel(r))}　${esc(r.machineName)}${r.unit ? ' ' + esc(r.unit) : ''}</div>
         ${i.note ? `<div class="t2">所見：${esc(i.note)}</div>` : ''}
+        ${photo}
       </div>
-    </div>`).join('') : '<p class="empty">不良・要注意はありません</p>';
+      <div class="side">
+        <button class="sharebtn" data-share="${r.id}" aria-label="共有">共有</button>
+      </div>
+    </div>`;
+  }).join('') : '<p class="empty">不良・要注意はありません</p>';
+  bindPhotoStrips('#dashIssues');
+  $$('#dashIssues [data-share]').forEach(b => b.addEventListener('click', () => shareRecord(b.dataset.share)));
 }
 
 /* 点検場所（工場名）の編集。名称は端末内にのみ保存されます */

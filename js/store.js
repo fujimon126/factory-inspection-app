@@ -110,7 +110,8 @@ const Store = {
         if (json.photoUrls) {
           json.photoUrls.forEach(p => {
             const it = list[i].items[p.index];
-            if (it) { it.photoUrl = p.url; it.photo = ''; } // 端末側の画像は破棄して容量節約
+            // ドライブに保存できたら端末側の画像は破棄して容量を節約する
+            if (it) { it.photoUrl = p.url; it.photoId = p.id || ''; it.photo = ''; }
           });
         }
         this.writeAll(list);
@@ -193,6 +194,36 @@ const Util = {
       reader.readAsDataURL(file);
     });
   },
+  /* ---------- 写真の表示・共有 ---------- */
+  hasPhoto(it) { return !!(it && (it.photo || it.photoUrl)); },
+  // ドライブのファイルIDを取り出す（URLからも復元できるようにする）
+  photoId(it) {
+    if (it.photoId) return it.photoId;
+    const m = /\/d\/([^/?]+)/.exec(it.photoUrl || '');
+    return m ? m[1] : '';
+  },
+  // 一覧に並べる縮小画像。未送信なら端末内の画像、送信済みならドライブの縮小版
+  photoSrc(it) {
+    if (it.photo) return it.photo;
+    const id = this.photoId(it);
+    return id ? 'https://drive.google.com/thumbnail?id=' + id + '&sz=w600' : '';
+  },
+  // 共有・拡大表示に使うリンク（送信後のみ）
+  photoLink(it) { return it.photoUrl || ''; },
+  // 端末内の画像を共有用のファイルに変換する
+  dataUrlToFile(dataUrl, name) {
+    try {
+      const [head, b64] = dataUrl.split(',');
+      const mime = (/data:([^;]+)/.exec(head) || [])[1] || 'image/jpeg';
+      const bin = atob(b64);
+      const buf = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+      return new File([buf], name, { type: mime });
+    } catch (e) {
+      return null;
+    }
+  },
+
   // 記録全体の判定（不良＞要注意＞良）
   statusOf(rec) {
     const js = (rec.items || []).map(i => i.judge);
