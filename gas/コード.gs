@@ -31,23 +31,25 @@ function 初期設定() {
   rec.setFrozenRows(1);
   det.setFrozenRows(1);
 
-  // 「2026-08」がスプレッドシート側で日付に自動変換されないよう、年月列を書式なしテキストに固定
-  rec.getRange('C2:C').setNumberFormat('@');
-  det.getRange('C2:C').setNumberFormat('@');
-  rec.getRange('B2:B').setNumberFormat('yyyy-mm-dd');
-  det.getRange('B2:B').setNumberFormat('yyyy-mm-dd');
+  // 表示形式の設定。シートが「テーブル」になっていると列に型が固定されていて
+  // 設定できないことがあるため、失敗しても処理を止めずに次へ進める
+  safe_(function () { rec.getRange('C2:C').setNumberFormat('@'); });
+  safe_(function () { det.getRange('C2:C').setNumberFormat('@'); });
+  safe_(function () { rec.getRange('B2:B').setNumberFormat('yyyy-mm-dd'); });
+  safe_(function () { det.getRange('B2:B').setNumberFormat('yyyy-mm-dd'); });
 
   // 判定の色分け（総合判定列）
-  var rng = rec.getRange('H2:H10000');
-  var rules = [
-    SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo('不良')
-      .setBackground('#fdeceb').setFontColor('#d93025').setRanges([rng]).build(),
-    SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo('要注意')
-      .setBackground('#fff5e0').setFontColor('#b87700').setRanges([rng]).build(),
-    SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo('良')
-      .setBackground('#e7f6ec').setFontColor('#0f9d58').setRanges([rng]).build()
-  ];
-  rec.setConditionalFormatRules(rules);
+  safe_(function () {
+    var rng = rec.getRange('H2:H10000');
+    rec.setConditionalFormatRules([
+      SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo('不良')
+        .setBackground('#fdeceb').setFontColor('#d93025').setRanges([rng]).build(),
+      SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo('要注意')
+        .setBackground('#fff5e0').setFontColor('#b87700').setRanges([rng]).build(),
+      SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo('良')
+        .setBackground('#e7f6ec').setFontColor('#0f9d58').setRanges([rng]).build()
+    ]);
+  });
 
   // ダッシュボード（数式で自動集計）
   buildDashboard_(ss);
@@ -57,6 +59,11 @@ function 初期設定() {
 
   SpreadsheetApp.flush();
   return 'セットアップ完了';
+}
+
+/* 見た目の設定など、失敗しても処理を続けてよいものを包む */
+function safe_(fn) {
+  try { fn(); } catch (e) { Logger.log('スキップしました: ' + e); }
 }
 
 /* ============ ダッシュボードの作成 ============ */
@@ -99,9 +106,14 @@ function buildDashboard_(ss) {
 
 /* B2 の年月を安全に読み取る式。日付に変換されていても yyyy-MM に直す */
 var YM_ = 'IF(ISNUMBER($B$2),TEXT($B$2,"yyyy-mm"),TRIM(TO_TEXT($B$2)))';
-/* B2 が空欄なら条件なし（全期間）、入力があれば年月で絞り込む */
-function whereYm_() { return '&IF($B$2="","","where C = \'"&' + YM_ + '&"\' ")&'; }
-function andYm_() { return '&IF($B$2="","","and C = \'"&' + YM_ + '&"\' ")&'; }
+/* 絞り込みは文字列の年月列ではなく、確実に日付である「点検日」列(B)の期間で行う。
+   これによりシートが「テーブル」でも列の型に左右されず集計できる */
+var D1_ = 'TEXT(DATEVALUE(' + YM_ + '&"-01"),"yyyy-mm-dd")';
+var D2_ = 'TEXT(EOMONTH(DATEVALUE(' + YM_ + '&"-01"),0),"yyyy-mm-dd")';
+var COND_ = 'B >= date \'"&' + D1_ + '&"\' and B <= date \'"&' + D2_ + '&"\' ';
+/* B2 が空欄なら条件なし（全期間）、入力があれば当月で絞り込む */
+function whereYm_() { return '&IF($B$2="","","where ' + COND_ + '")&'; }
+function andYm_() { return '&IF($B$2="","","and ' + COND_ + '")&'; }
 function q_(range, select, tail, empty) {
   return '=IFERROR(QUERY(' + range + ',"' + select + '"' + whereYm_() + '"' + tail + '",1),"' + empty + '")';
 }
@@ -115,7 +127,7 @@ function 修復_年月列() {
     var n = sh.getLastRow() - 1;
     var dates = sh.getRange(2, 2, n, 1).getValues();   // B列＝点検日
     var col = sh.getRange(2, 3, n, 1);                 // C列＝年月
-    col.setNumberFormat('@');
+    safe_(function () { col.setNumberFormat('@'); });  // テーブルの場合は書式を変更できないので飛ばす
     col.setValues(dates.map(function (d) { return [ymOf_(d[0])]; }));
   });
   return '年月列を修復しました';
@@ -172,7 +184,7 @@ function saveRecord_(rec) {
     else if (!it.judge) counts.NONE++;
   });
 
-  var row = [rec.id, rec.date, ym, rec.site, rec.machineName, rec.unit || '', rec.inspector || '',
+  var row = [rec.id, toDate_(rec.date), ym, rec.site, rec.machineName, rec.unit || '', rec.inspector || '',
     JUDGE_LABEL[rec.status] || '', counts.NG, counts.CAUTION, counts.NONE, rec.note || '',
     rec.createdAt ? new Date(rec.createdAt) : now, now];
 
@@ -186,7 +198,7 @@ function saveRecord_(rec) {
   deleteDetail_(detSh, rec.id);
   if (items.length) {
     var detRows = items.map(function (it, i) {
-      return [rec.id, rec.date, ym, rec.site, rec.machineName, rec.unit || '', rec.inspector || '',
+      return [rec.id, toDate_(rec.date), ym, rec.site, rec.machineName, rec.unit || '', rec.inspector || '',
         i + 1, it.name, JUDGE_LABEL[it.judge] || '未判定', it.value === '' ? '' : it.value,
         it.unit || '', it.note || '', it.photoUrl || '', now];
     });
@@ -260,7 +272,7 @@ function listRecords_(ym) {
 
   var byId = {};
   dets.forEach(function (d) {
-    if (ym && ymOf_(d[2]) !== ym) return;
+    if (ym && ymOf_(d[1]) !== ym) return;   // 点検日から年月を判定する
     (byId[d[0]] = byId[d[0]] || []).push({
       name: d[8], type: d[11] ? 'num' : 'judge', unit: d[11] || '',
       judge: labelToKey_(d[9]), value: d[10] === '' ? '' : String(d[10]),
@@ -268,7 +280,7 @@ function listRecords_(ym) {
     });
   });
 
-  return recs.filter(function (r) { return !ym || ymOf_(r[2]) === ym; }).map(function (r) {
+  return recs.filter(function (r) { return !ym || ymOf_(r[1]) === ym; }).map(function (r) {
     return {
       id: String(r[0]),
       date: fmtDate_(r[1]),
@@ -295,6 +307,11 @@ function fmtDate_(v) {
 function ymOf_(v) {
   if (v instanceof Date) return Utilities.formatDate(v, 'JST', 'yyyy-MM');
   return String(v).slice(0, 7);
+}
+/* 'YYYY-MM-DD' を日付データに変換する（文字列のまま入れると期間の絞り込みが効かないため） */
+function toDate_(s) {
+  var m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(s || ''));
+  return m ? new Date(+m[1], +m[2] - 1, +m[3]) : s;
 }
 var MACHINE_IDS = ['回収乾燥機', '静止立体乾燥機', 'ドライ機', '水洗機', 'トンネルフィニッシャー',
   '立体自動包装機', '平包装機', '立体手動包装機', 'シーツローラー', 'カッタープレス機',
