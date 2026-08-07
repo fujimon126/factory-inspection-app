@@ -50,33 +50,75 @@ function 初期設定() {
   rec.setConditionalFormatRules(rules);
 
   // ダッシュボード（数式で自動集計）
+  buildDashboard_(ss);
+
+  // 既存データの年月列を作り直す（過去に日付へ自動変換されたものを文字列に戻す）
+  修復_年月列();
+
+  SpreadsheetApp.flush();
+  return 'セットアップ完了';
+}
+
+/* ============ ダッシュボードの作成 ============ */
+function buildDashboard_(ss) {
   var dash = ss.getSheetByName(SH_DASH) || ss.insertSheet(SH_DASH);
   dash.clear();
   dash.getRange('A1').setValue('工場点検 進捗ダッシュボード').setFontSize(16).setFontWeight('bold');
   dash.getRange('A2').setValue('対象年月');
-  dash.getRange('B2').setValue(Utilities.formatDate(new Date(), 'JST', 'yyyy-MM'));
-  dash.getRange('B2').setNote('集計したい年月を yyyy-MM 形式で入力してください');
+
+  // B2 を書式なしテキストにしてから入力する（"2026-08" が日付に変換されるのを防ぐ）
+  dash.getRange('B2').setNumberFormat('@')
+    .setValue(Utilities.formatDate(new Date(), 'JST', 'yyyy-MM'))
+    .setBackground('#fff9d6').setFontWeight('bold')
+    .setNote('集計したい年月を yyyy-MM 形式（例 2026-08）で入力してください。\n空欄にすると全期間を集計します。');
+  dash.getRange('C2').setFormula('=IF($B$2="","（空欄のため全期間を集計中）","集計対象："&' + YM_ + '&"　※空欄にすると全期間")')
+    .setFontColor('#6b7b8c');
 
   dash.getRange('A4').setValue('■ 工場別 点検台数').setFontWeight('bold');
-  dash.getRange('A5').setFormula(
-    '=IFERROR(QUERY(' + SH_REC + '!A:N,"select D, count(A) where C = \'"&B2&"\' group by D label D \'点検場所\', count(A) \'点検台数\'",1),"データなし")');
+  dash.getRange('A5').setFormula(q_(SH_REC + '!A:N',
+    'select D, count(A) ', 'group by D label D \'点検場所\', count(A) \'点検台数\'', 'データなし'));
 
   dash.getRange('D4').setValue('■ 判定内訳').setFontWeight('bold');
-  dash.getRange('D5').setFormula(
-    '=IFERROR(QUERY(' + SH_REC + '!A:N,"select H, count(A) where C = \'"&B2&"\' group by H label H \'総合判定\', count(A) \'件数\'",1),"データなし")');
+  dash.getRange('D5').setFormula(q_(SH_REC + '!A:N',
+    'select H, count(A) ', 'group by H label H \'総合判定\', count(A) \'件数\'', 'データなし'));
 
   dash.getRange('G4').setValue('■ 要対応（不良・要注意）項目一覧').setFontWeight('bold');
   dash.getRange('G5').setFormula(
-    '=IFERROR(QUERY(' + SH_DET + '!A:O,"select B, D, E, F, I, J, M where C = \'"&B2&"\' and (J = \'不良\' or J = \'要注意\') order by B desc label B \'点検日\', D \'場所\', E \'機械\', F \'号機\', I \'項目\', J \'判定\', M \'所見\'",1),"要対応なし")');
+    '=IFERROR(QUERY(' + SH_DET + '!A:O,"select B, D, E, F, I, J, M where (J = \'不良\' or J = \'要注意\') "' +
+    andYm_() +
+    '"order by B desc label B \'点検日\', D \'場所\', E \'機械\', F \'号機\', I \'項目\', J \'判定\', M \'所見\'",1),"要対応なし")');
 
   dash.getRange('A20').setValue('■ 機械別 点検回数').setFontWeight('bold');
-  dash.getRange('A21').setFormula(
-    '=IFERROR(QUERY(' + SH_REC + '!A:N,"select E, count(A) where C = \'"&B2&"\' group by E order by count(A) desc label E \'点検機械\', count(A) \'点検回数\'",1),"データなし")');
+  dash.getRange('A21').setFormula(q_(SH_REC + '!A:N',
+    'select E, count(A) ', 'group by E order by count(A) desc label E \'点検機械\', count(A) \'点検回数\'', 'データなし'));
 
   dash.setColumnWidth(1, 160);
+  dash.setColumnWidth(3, 320);
   dash.autoResizeColumns(4, 12);
-  SpreadsheetApp.getUi && SpreadsheetApp.flush();
-  return 'セットアップ完了';
+}
+
+/* B2 の年月を安全に読み取る式。日付に変換されていても yyyy-MM に直す */
+var YM_ = 'IF(ISNUMBER($B$2),TEXT($B$2,"yyyy-mm"),TRIM(TO_TEXT($B$2)))';
+/* B2 が空欄なら条件なし（全期間）、入力があれば年月で絞り込む */
+function whereYm_() { return '&IF($B$2="","","where C = \'"&' + YM_ + '&"\' ")&'; }
+function andYm_() { return '&IF($B$2="","","and C = \'"&' + YM_ + '&"\' ")&'; }
+function q_(range, select, tail, empty) {
+  return '=IFERROR(QUERY(' + range + ',"' + select + '"' + whereYm_() + '"' + tail + '",1),"' + empty + '")';
+}
+
+/* ============ 年月列の修復（過去データの作り直し） ============ */
+function 修復_年月列() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  [SH_REC, SH_DET].forEach(function (name) {
+    var sh = ss.getSheetByName(name);
+    if (!sh || sh.getLastRow() < 2) return;
+    var n = sh.getLastRow() - 1;
+    var dates = sh.getRange(2, 2, n, 1).getValues();   // B列＝点検日
+    var col = sh.getRange(2, 3, n, 1);                 // C列＝年月
+    col.setNumberFormat('@');
+    col.setValues(dates.map(function (d) { return [ymOf_(d[0])]; }));
+  });
+  return '年月列を修復しました';
 }
 
 function getSheet_(ss, name, head) {
@@ -137,7 +179,8 @@ function saveRecord_(rec) {
   // 既存行があれば上書き（再送・修正に対応）
   var idx = findRow_(recSh, rec.id);
   if (idx > 0) recSh.getRange(idx, 1, 1, row.length).setValues([row]);
-  else recSh.appendRow(row);
+  else { recSh.appendRow(row); idx = recSh.getLastRow(); }
+  setYmText_(recSh, idx, 1, ym);   // 年月が日付に変換されないよう明示的にテキストで入れ直す
 
   // 明細は一旦削除して入れ直し
   deleteDetail_(detSh, rec.id);
@@ -147,9 +190,20 @@ function saveRecord_(rec) {
         i + 1, it.name, JUDGE_LABEL[it.judge] || '未判定', it.value === '' ? '' : it.value,
         it.unit || '', it.note || '', it.photoUrl || '', now];
     });
-    detSh.getRange(detSh.getLastRow() + 1, 1, detRows.length, DET_HEAD.length).setValues(detRows);
+    var start = detSh.getLastRow() + 1;
+    detSh.getRange(start, 1, detRows.length, DET_HEAD.length).setValues(detRows);
+    setYmText_(detSh, start, detRows.length, ym);
   }
   return { ok: true, id: rec.id, photoUrls: photoUrls };
+}
+
+/* 年月列（C列）を書式なしテキストとして入れ直す */
+function setYmText_(sh, startRow, numRows, ym) {
+  var rng = sh.getRange(startRow, 3, numRows, 1);
+  rng.setNumberFormat('@');
+  var vals = [];
+  for (var i = 0; i < numRows; i++) vals.push([ym]);
+  rng.setValues(vals);
 }
 
 function findRow_(sh, id) {
