@@ -219,6 +219,41 @@
   <button class="tab" data-view="settings"><span>⚙️</span>設定</button>
 </nav>
 
+<div id="doneDialog" class="modal hidden">
+  <div class="modalbox">
+    <h3 class="mtitle">対応完了の記録</h3>
+    <p class="hint" id="doneTarget"></p>
+    <div class="field">
+      <label for="doneDate">対応日</label>
+      <input type="date" id="doneDate">
+    </div>
+    <div class="field">
+      <label for="donePerson">対応担当者</label>
+      <input type="text" id="donePerson" placeholder="氏名">
+    </div>
+    <div class="field">
+      <label for="doneNote">対応内容</label>
+      <textarea id="doneNote" rows="3" placeholder="例）パッキンを交換、増し締め、清掃で解消"></textarea>
+    </div>
+    <div class="field">
+      <label>対応後の写真（任意）</label>
+      <div class="subrow">
+        <button id="donePhotoBtn" class="btn ghost sm" style="flex:1">📷 写真を撮影・選択</button>
+      </div>
+      <div id="donePhotoThumb"></div>
+    </div>
+    <label class="check">
+      <input type="checkbox" id="doneToOk">
+      判定を「良」に変更する
+    </label>
+    <p class="hint" style="margin-top:-6px">修理・調整が終わり正常に戻った場合はチェックしてください。スプレッドシートの判定も「良」になり、当初の判定は「当初判定」欄に残ります。</p>
+    <div class="actionbar">
+      <button id="doneCancel" class="btn ghost">キャンセル</button>
+      <button id="doneSubmit" class="btn primary">対応完了として記録</button>
+    </div>
+  </div>
+</div>
+
 <div id="lightbox" class="lightbox hidden">
   <img id="lightboxImg" alt="点検写真">
   <div class="lbbar">

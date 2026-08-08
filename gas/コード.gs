@@ -20,7 +20,7 @@ var REC_HEAD = ['ID', '点検日', '年月', '点検場所', '点検機械', '�
   '総合判定', '不良件数', '要注意件数', '未判定件数', '備考', '登録日時', '更新日時'];
 var DET_HEAD = ['ID', '点検日', '年月', '点検場所', '点検機械', '号機', '点検者',
   '項目No', '点検項目', '判定', '測定値', '単位', '所見', '写真URL', '更新日時',
-  '対応状況', '対応日時', '対応者'];
+  '対応状況', '対応日', '対応者', '対応内容', '対応写真', '当初判定'];
 
 var JUDGE_LABEL = { OK: '良', CAUTION: '要注意', NG: '不良', NA: '対象外', '': '未判定' };
 
@@ -44,8 +44,9 @@ function 初期設定() {
   // ダッシュボード（数式で自動集計）
   buildDashboard_(ss);
 
-  // 既存データの点検日・年月を正しい形式に揃え直す
+  // 既存データを最新の形式に揃え直す
   修復_日付と年月();
+  safe_(修復_対応状況);
 
   return 'セットアップ完了';
 }
@@ -82,7 +83,7 @@ function setRecColors_(sh) {
 /* 点検明細シート：判定(J)と対応状況(P)を色分けし、行全体も薄く色づけする */
 function setDetColors_(sh) {
   var judge = sh.getRange('J2:J10000');       // 判定
-  var row = sh.getRange('A2:R10000');         // 行全体
+  var row = sh.getRange('A2:U10000');         // 行全体
   var state = sh.getRange('P2:P10000');       // 対応状況
   sh.setConditionalFormatRules([
     rule_(judge, '不良', C_NG, true),
@@ -142,6 +143,10 @@ function buildDashboard_(ss) {
   dash.getRange('C2').setFormula('=IF($B$2="","（空欄のため全期間を集計中）","集計対象："&' + YM_ + '&"　※空欄にすると全期間")')
     .setFontColor('#6b7b8c');
 
+  /* 表はそれぞれ別の列に置く。
+     QUERY はデータ件数に応じて下へ伸びるため、同じ列に並べると
+     下の表とぶつかって「#REF! 結果が重複しています」となり何も表示されなくなる。 */
+
   dash.getRange('A4').setValue('■ 工場別 点検機械項目').setFontWeight('bold');
   dash.getRange('A5').setFormula(q_(SH_REC + '!A:N',
     'select D, count(A) ', 'group by D label D \'点検場所\', count(A) \'点検機械項目\'', 'データなし'));
@@ -150,24 +155,31 @@ function buildDashboard_(ss) {
   dash.getRange('D5').setFormula(q_(SH_REC + '!A:N',
     'select H, count(A) ', 'group by H label H \'総合判定\', count(A) \'件数\'', 'データなし'));
 
-  dash.getRange('G4').setValue('■ 要対応（未対応の不良・要注意）').setFontWeight('bold');
-  // P列（対応状況）が「未対応」の行だけを表示 … アプリで対応完了にすると自動で消える
+  dash.getRange('G4').setValue('■ 機械別 点検回数').setFontWeight('bold');
+  dash.getRange('G5').setFormula(q_(SH_REC + '!A:N',
+    'select E, count(A) ', 'group by E order by count(A) desc label E \'点検機械\', count(A) \'点検回数\'', 'データなし'));
+
+  dash.getRange('J4').setValue('■ 要対応（未対応の不良・要注意）').setFontWeight('bold');
+  // 「P is null」も条件に入れる … 対応状況が空欄の古いデータも表示されるようにするため
   // format B 'yyyy-mm-dd' … これが無いと点検日が日付の内部値（数字）で表示される
-  dash.getRange('G5').setFormula(
-    '=IFERROR(QUERY(' + SH_DET + '!A:R,"select B, D, E, F, I, J, M, N where P = \'未対応\' "' +
+  dash.getRange('J5').setFormula(
+    '=IFERROR(QUERY(' + SH_DET + '!A:U,"select B, D, E, F, I, J, M, N ' +
+    'where (J = \'不良\' or J = \'要注意\') and (P is null or P = \'未対応\') "' +
     andYm_() +
     '"order by B desc label B \'点検日\', D \'場所\', E \'機械\', F \'号機\', I \'項目\', J \'判定\', M \'所見\', N \'写真\' format B \'yyyy-mm-dd\'",1),"要対応なし")');
-  safe_(function () { dash.getRange('G5:G').setNumberFormat('yyyy-mm-dd'); });
 
-  dash.getRange('A26').setValue('■ 対応完了した項目').setFontWeight('bold');
-  dash.getRange('A27').setFormula(
-    '=IFERROR(QUERY(' + SH_DET + '!A:R,"select B, D, E, I, J, Q, R where P = \'完了\' "' +
+  dash.getRange('S4').setValue('■ 対応完了した項目').setFontWeight('bold');
+  dash.getRange('S5').setFormula(
+    '=IFERROR(QUERY(' + SH_DET + '!A:U,"select B, D, E, I, U, Q, R, S, T where P = \'完了\' "' +
     andYm_() +
-    '"order by Q desc label B \'点検日\', D \'場所\', E \'機械\', I \'項目\', J \'判定\', Q \'対応日\', R \'対応者\' format B \'yyyy-mm-dd\', Q \'yyyy-mm-dd\'",1),"完了分なし")');
+    '"order by Q desc label B \'点検日\', D \'場所\', E \'機械\', I \'項目\', U \'当初判定\', ' +
+    'Q \'対応日\', R \'対応者\', S \'対応内容\', T \'対応写真\' format B \'yyyy-mm-dd\', Q \'yyyy-mm-dd\'",1),"完了分なし")');
 
-  dash.getRange('A20').setValue('■ 機械別 点検回数').setFontWeight('bold');
-  dash.getRange('A21').setFormula(q_(SH_REC + '!A:N',
-    'select E, count(A) ', 'group by E order by count(A) desc label E \'点検機械\', count(A) \'点検回数\'', 'データなし'));
+  safe_(function () {
+    dash.getRange('J5:J').setNumberFormat('yyyy-mm-dd');   // 要対応の点検日
+    dash.getRange('S5:S').setNumberFormat('yyyy-mm-dd');   // 完了分の点検日
+    dash.getRange('X5:X').setNumberFormat('yyyy-mm-dd');   // 完了分の対応日
+  });
 
   safe_(function () {
     dash.setColumnWidth(1, 160);
@@ -212,6 +224,28 @@ function 修復_日付と年月() {
     msg.push(name + ' ' + n + '行');
   });
   var out = '修復しました: ' + (msg.join(' / ') || '対象データなし');
+  Logger.log(out);
+  return out;
+}
+
+/* 対応状況が空欄の不良・要注意を「未対応」で埋める（列を追加する前のデータ用） */
+function 修復_対応状況() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sh = ss.getSheetByName(SH_DET);
+  if (!sh || sh.getLastRow() < 2) return '対象データなし';
+  var n = sh.getLastRow() - 1;
+  var judges = sh.getRange(2, 10, n, 1).getValues();   // J列＝判定
+  var states = sh.getRange(2, 16, n, 1).getValues();   // P列＝対応状況
+  var filled = 0;
+  for (var i = 0; i < n; i++) {
+    var j = String(judges[i][0]);
+    if ((j === '不良' || j === '要注意') && !String(states[i][0]).trim()) {
+      states[i][0] = '未対応';
+      filled++;
+    }
+  }
+  sh.getRange(2, 16, n, 1).setValues(states);
+  var out = '対応状況を ' + filled + ' 件「未対応」にしました';
   Logger.log(out);
   return out;
 }
@@ -284,12 +318,21 @@ function saveRecord_(rec) {
   // 写真をドライブへ保存し、URLに置換
   var photoUrls = [];
   items.forEach(function (it, idx) {
+    // 点検時の写真
     if (it.photo && String(it.photo).indexOf('data:image') === 0) {
       var p = savePhoto_(it.photo, [rec.date, rec.site, rec.machineName, it.name, idx].join('_'));
       it.photoUrl = p.url;
       it.photoId = p.id;
       it.photo = '';
-      photoUrls.push({ index: idx, url: p.url, id: p.id });
+      photoUrls.push({ index: idx, url: p.url, id: p.id, kind: 'item' });
+    }
+    // 対応完了時の写真
+    if (it.resolvedPhoto && String(it.resolvedPhoto).indexOf('data:image') === 0) {
+      var p2 = savePhoto_(it.resolvedPhoto, [rec.date, rec.site, rec.machineName, it.name, idx, '対応後'].join('_'));
+      it.resolvedPhotoUrl = p2.url;
+      it.resolvedPhotoId = p2.id;
+      it.resolvedPhoto = '';
+      photoUrls.push({ index: idx, url: p2.url, id: p2.id, kind: 'resolved' });
     }
   });
 
@@ -313,13 +356,16 @@ function saveRecord_(rec) {
   deleteDetail_(detSh, rec.id);
   if (items.length) {
     var detRows = items.map(function (it, i) {
-      // 不良・要注意の項目だけ対応状況を持たせる（それ以外は空欄）
+      // 不良・要注意の項目に対応状況を持たせる。
+      // 対応完了後に判定を「良」へ変えた項目も、完了の記録として残す
       var needsAction = (it.judge === 'NG' || it.judge === 'CAUTION');
-      var state = needsAction ? (it.resolved ? '完了' : '未対応') : '';
+      var state = it.resolved ? '完了' : (needsAction ? '未対応' : '');
       return [rec.id, toDate_(rec.date), ym, rec.site, rec.machineName, rec.unit || '', rec.inspector || '',
         i + 1, it.name, JUDGE_LABEL[it.judge] || '未判定', it.value === '' ? '' : it.value,
         it.unit || '', it.note || '', it.photoUrl || '', now,
-        state, it.resolvedAt ? new Date(it.resolvedAt) : '', it.resolvedBy || ''];
+        state, it.resolvedAt ? toDate_(it.resolvedAt) : '', it.resolvedBy || '',
+        it.resolvedNote || '', it.resolvedPhotoUrl || '',
+        it.originalJudge ? (JUDGE_LABEL[it.originalJudge] || '') : ''];
     });
     detSh.getRange(detSh.getLastRow() + 1, 1, detRows.length, DET_HEAD.length).setValues(detRows);
   }
@@ -393,8 +439,11 @@ function listRecords_(ym) {
       judge: labelToKey_(d[9]), value: d[10] === '' ? '' : String(d[10]),
       note: d[12] || '', photo: '', photoUrl: d[13] || '',
       resolved: d[15] === '完了',
-      resolvedAt: d[16] ? new Date(d[16]).toISOString() : '',
-      resolvedBy: d[17] || ''
+      resolvedAt: d[16] ? fmtDate_(d[16]) : '',
+      resolvedBy: d[17] || '',
+      resolvedNote: d[18] || '',
+      resolvedPhoto: '', resolvedPhotoUrl: d[19] || '',
+      originalJudge: labelToKey_(d[20])
     });
   });
 

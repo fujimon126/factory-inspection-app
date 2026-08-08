@@ -149,8 +149,13 @@ const Store = {
         if (json.photoUrls) {
           json.photoUrls.forEach(p => {
             const it = list[i].items[p.index];
+            if (!it) return;
             // ドライブに保存できたら端末側の画像は破棄して容量を節約する
-            if (it) { it.photoUrl = p.url; it.photoId = p.id || ''; it.photo = ''; }
+            if (p.kind === 'resolved') {
+              it.resolvedPhotoUrl = p.url; it.resolvedPhotoId = p.id || ''; it.resolvedPhoto = '';
+            } else {
+              it.photoUrl = p.url; it.photoId = p.id || ''; it.photo = '';
+            }
           });
         }
         this.writeAll(list);
@@ -249,6 +254,14 @@ const Util = {
   },
   // 共有・拡大表示に使うリンク（送信後のみ）
   photoLink(it) { return it.photoUrl || ''; },
+  // 対応後の写真を、点検写真と同じ形で扱えるようにする
+  resolvedPhotoOf(it) {
+    return {
+      photo: it.resolvedPhoto || '',
+      photoId: it.resolvedPhotoId || '',
+      photoUrl: it.resolvedPhotoUrl || ''
+    };
+  },
   // 端末内の画像を共有用のファイルに変換する
   dataUrlToFile(dataUrl, name) {
     try {

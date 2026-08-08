@@ -98,6 +98,10 @@ function init() {
   $('#btnExportJson').addEventListener('click', exportJson);
   $('#btnClearSynced').addEventListener('click', clearSynced);
 
+  $('#doneCancel').addEventListener('click', closeDoneDialog);
+  $('#doneSubmit').addEventListener('click', submitDone);
+  $('#donePhotoBtn').addEventListener('click', pickDonePhoto);
+  $('#doneDialog').addEventListener('click', ev => { if (ev.target.id === 'doneDialog') closeDoneDialog(); });
   $('#lbClose').addEventListener('click', closePhoto);
   $('#lbShare').addEventListener('click', sharePhoto);
   $('#lightbox').addEventListener('click', ev => { if (ev.target.id === 'lightbox') closePhoto(); });
@@ -393,15 +397,20 @@ function photoStrip(rec) {
 function bindPhotoStrips(root) {
   $$(root + ' [data-photo-rid]').forEach(b => b.addEventListener('click', ev => {
     ev.stopPropagation();
-    openPhoto(b.dataset.photoRid, +b.dataset.photoI);
+    openPhoto(b.dataset.photoRid, +b.dataset.photoI, b.dataset.kind);
   }));
 }
 
 let lightboxTarget = null;
-function openPhoto(rid, idx) {
+function openPhoto(rid, idx, kind) {
   const rec = Store.get(rid);
   if (!rec) return;
-  const it = rec.items[idx];
+  const item = rec.items[idx];
+  // 「対応後」の写真は別項目として扱う
+  const it = kind === 'resolved' ? Util.resolvedPhotoOf(item) : item;
+  it.name = item.name + (kind === 'resolved' ? '（対応後）' : '');
+  it.judge = item.judge;
+  it.note = kind === 'resolved' ? (item.resolvedNote || '') : (item.note || '');
   lightboxTarget = { rec, it };
   $('#lightboxImg').src = Util.photoSrc(it);
   const link = Util.photoLink(it);
@@ -496,7 +505,9 @@ function todoItems(includeDone) {
   const out = [];
   Store.records().forEach(r => {
     (r.items || []).forEach((it, idx) => {
-      if (it.judge !== 'NG' && it.judge !== 'CAUTION') return;
+      // 対応完了して判定を「良」に変えた項目も、完了分の表示対象に含める
+      const target = it.judge === 'NG' || it.judge === 'CAUTION' || it.resolved;
+      if (!target) return;
       if (!includeDone && it.resolved) return;
       out.push({ r, it, idx });
     });
@@ -505,6 +516,10 @@ function todoItems(includeDone) {
   return out.sort((a, b) =>
     (a.it.judge === b.it.judge ? 0 : a.it.judge === 'NG' ? -1 : 1) ||
     b.r.date.localeCompare(a.r.date));
+}
+/* 一覧に表示する判定（完了後に良へ変えた場合は当初の判定を見せる） */
+function shownJudge(it) {
+  return (it.resolved && it.originalJudge) ? it.originalJudge : it.judge;
 }
 function openTodoCount() {
   return todoItems(false).length;
@@ -524,8 +539,9 @@ function renderTodo() {
     (!siteId || sameSite(x.r, siteId)) && (!kind || x.it.judge === kind));
 
   const open = openTodoCount();
+  const opens = todoItems(false);
   $('#todoSummary').textContent = open
-    ? `未対応 ${open} 件（不良 ${todoItems(false).filter(x => x.it.judge === 'NG').length} 件 / 要注意 ${todoItems(false).filter(x => x.it.judge === 'CAUTION').length} 件）`
+    ? `未対応 ${open} 件（不良 ${opens.filter(x => x.it.judge === 'NG').length} 件 / 要注意 ${opens.filter(x => x.it.judge === 'CAUTION').length} 件）`
     : '未対応の項目はありません';
 
   if (!all.length) {
@@ -536,17 +552,32 @@ function renderTodo() {
 
   $('#todoList').innerHTML = all.map(({ r, it, idx }) => {
     const done = !!it.resolved;
-    const photo = Util.hasPhoto(it)
-      ? `<div class="photos"><button class="pthumb" data-photo-rid="${r.id}" data-photo-i="${idx}">
-           <img src="${Util.photoSrc(it)}" alt="${esc(it.name)}" loading="lazy"></button></div>` : '';
+    const j = shownJudge(it);
+    const thumbs = [];
+    if (Util.hasPhoto(it)) {
+      thumbs.push(`<button class="pthumb" data-photo-rid="${r.id}" data-photo-i="${idx}" data-kind="item">
+        <img src="${Util.photoSrc(it)}" alt="点検時の写真" loading="lazy"><span class="pbadge">点検時</span></button>`);
+    }
+    const rp = Util.resolvedPhotoOf(it);
+    if (Util.hasPhoto(rp)) {
+      thumbs.push(`<button class="pthumb" data-photo-rid="${r.id}" data-photo-i="${idx}" data-kind="resolved">
+        <img src="${Util.photoSrc(rp)}" alt="対応後の写真" loading="lazy"><span class="pbadge ok">対応後</span></button>`);
+    }
+    const doneInfo = done ? `
+      <div class="doneblock">
+        <div class="doneinfo">✔ 対応完了　${esc(it.resolvedAt ? Util.fmtDate(it.resolvedAt) : '')}${it.resolvedBy ? '　' + esc(it.resolvedBy) : ''}</div>
+        ${it.resolvedNote ? `<div class="t2">対応内容：${esc(it.resolvedNote)}</div>` : ''}
+        ${it.originalJudge ? `<div class="t2">判定を「良」に変更（当初：${JUDGE[it.originalJudge].label}）</div>` : ''}
+      </div>` : '';
+
     return `<div class="rec todo ${done ? 'donerec' : ''}">
-      <div class="stat ${JUDGE[it.judge].cls}">${JUDGE[it.judge].label[0]}</div>
+      <div class="stat ${JUDGE[j].cls}">${JUDGE[j].label[0]}</div>
       <div class="body">
         <div class="t1">${esc(it.name)}${it.value ? `　<span class="t2">${esc(it.value)}${esc(it.unit || '')}</span>` : ''}</div>
         <div class="t2">${Util.fmtDate(r.date)}　${esc(siteLabel(r))}　${esc(r.machineName)}${r.unit ? ' ' + esc(r.unit) : ''}</div>
         ${it.note ? `<div class="t2">所見：${esc(it.note)}</div>` : ''}
-        ${done ? `<div class="t2 doneinfo">✔ 対応完了　${esc(it.resolvedAt ? Util.fmtDate(it.resolvedAt.slice(0, 10)) : '')}${it.resolvedBy ? '　' + esc(it.resolvedBy) : ''}</div>` : ''}
-        ${photo}
+        ${doneInfo}
+        ${thumbs.length ? `<div class="photos">${thumbs.join('')}</div>` : ''}
         <div class="todobtns">
           ${done
         ? `<button class="btn ghost sm" data-undo="${r.id}" data-i="${idx}">未対応に戻す</button>`
@@ -560,9 +591,9 @@ function renderTodo() {
 
   bindPhotoStrips('#todoList');
   $$('#todoList [data-done]').forEach(b =>
-    b.addEventListener('click', () => resolveItem(b.dataset.done, +b.dataset.i, true)));
+    b.addEventListener('click', () => openDoneDialog(b.dataset.done, +b.dataset.i)));
   $$('#todoList [data-undo]').forEach(b =>
-    b.addEventListener('click', () => resolveItem(b.dataset.undo, +b.dataset.i, false)));
+    b.addEventListener('click', () => unresolveItem(b.dataset.undo, +b.dataset.i)));
   $$('#todoList [data-share]').forEach(b =>
     b.addEventListener('click', () => shareRecord(b.dataset.share)));
   $$('#todoList [data-open]').forEach(b => b.addEventListener('click', () => {
@@ -575,26 +606,106 @@ function renderTodo() {
   updateTodoBadge();
 }
 
-/* 対応完了／未対応に戻す。スプレッドシートにも反映するため未送信に戻す */
-function resolveItem(rid, idx, done) {
+/* ---- 対応完了の記録 ---- */
+let doneTarget = null;      // { rid, idx }
+let donePhoto = '';         // 対応後の写真（DataURL）
+
+function openDoneDialog(rid, idx) {
   const rec = Store.get(rid);
   if (!rec || !rec.items[idx]) return;
   const it = rec.items[idx];
-  if (done) {
-    if (!confirm(`「${it.name}」を対応完了にします。\n（要対応リストから外れ、スプレッドシートにも記録されます）\n\nよろしいですか？`)) return;
-    it.resolved = true;
-    it.resolvedAt = new Date().toISOString();
-    it.resolvedBy = $('#inpInspector').value.trim() || Store.settings().inspector || '';
-  } else {
-    it.resolved = false;
-    it.resolvedAt = '';
-    it.resolvedBy = '';
+  doneTarget = { rid, idx };
+  donePhoto = '';
+  $('#doneTarget').textContent =
+    `${rec.machineName}${rec.unit ? ' ' + rec.unit : ''}　${it.name}（${JUDGE[it.judge].label}）`;
+  $('#doneDate').value = Util.today();
+  $('#donePerson').value = $('#inpInspector').value.trim() || Store.settings().inspector || '';
+  $('#doneNote').value = it.resolvedNote || '';
+  $('#doneToOk').checked = false;
+  renderDonePhoto();
+  $('#doneDialog').classList.remove('hidden');
+}
+function closeDoneDialog() {
+  $('#doneDialog').classList.add('hidden');
+  doneTarget = null;
+  donePhoto = '';
+}
+function renderDonePhoto() {
+  $('#donePhotoThumb').innerHTML = donePhoto
+    ? `<div class="thumb"><img src="${donePhoto}" alt="対応後の写真"><button id="doneDelPhoto">×</button></div>` : '';
+  if (donePhoto) $('#doneDelPhoto').addEventListener('click', () => { donePhoto = ''; renderDonePhoto(); });
+}
+async function pickDonePhoto() {
+  const inp = document.createElement('input');
+  inp.type = 'file';
+  inp.accept = 'image/*';
+  inp.capture = 'environment';
+  inp.onchange = async () => {
+    if (!inp.files || !inp.files[0]) return;
+    busy(true, '画像を処理中…');
+    try {
+      donePhoto = await Util.compressImage(inp.files[0]);
+      renderDonePhoto();
+    } catch (e) {
+      toast('画像を読み込めませんでした', true);
+    } finally {
+      busy(false);
+    }
+  };
+  inp.click();
+}
+
+/* 入力内容を記録に反映する。スプレッドシートへ送るため未送信に戻す */
+function submitDone() {
+  if (!doneTarget) return;
+  const rec = Store.get(doneTarget.rid);
+  const it = rec.items[doneTarget.idx];
+  const note = $('#doneNote').value.trim();
+  if (!note && !confirm('対応内容が未記入です。このまま記録しますか？')) return;
+
+  it.resolved = true;
+  it.resolvedAt = $('#doneDate').value || Util.today();
+  it.resolvedBy = $('#donePerson').value.trim();
+  it.resolvedNote = note;
+  if (donePhoto) { it.resolvedPhoto = donePhoto; it.resolvedPhotoUrl = ''; it.resolvedPhotoId = ''; }
+
+  if ($('#doneToOk').checked) {
+    if (!it.originalJudge) it.originalJudge = it.judge;   // 当初の判定を残す
+    it.judge = 'OK';
+    rec.status = Util.statusOf(rec);                      // 総合判定を再計算
   }
-  rec.synced = false;                 // シートへ再送信して対応状況を反映させる
+
+  rec.synced = false;
+  Store.upsert(rec);
+  closeDoneDialog();
+  updatePendingBadge();
+  updateTodoBadge();
+  renderTodo();
+  toast('対応完了として記録しました');
+  if (Store.settings().autoSync && Store.settings().gasUrl && navigator.onLine) syncNow(false);
+}
+
+/* 未対応に戻す（判定を良に変えていた場合は元の判定に戻す） */
+function unresolveItem(rid, idx) {
+  const rec = Store.get(rid);
+  if (!rec || !rec.items[idx]) return;
+  const it = rec.items[idx];
+  if (!confirm(`「${it.name}」を未対応に戻します。\n（対応内容の記録も削除されます）\n\nよろしいですか？`)) return;
+  if (it.originalJudge) { it.judge = it.originalJudge; it.originalJudge = ''; }
+  it.resolved = false;
+  it.resolvedAt = '';
+  it.resolvedBy = '';
+  it.resolvedNote = '';
+  it.resolvedPhoto = '';
+  it.resolvedPhotoUrl = '';
+  it.resolvedPhotoId = '';
+  rec.status = Util.statusOf(rec);
+  rec.synced = false;
   Store.upsert(rec);
   updatePendingBadge();
+  updateTodoBadge();
   renderTodo();
-  toast(done ? '対応完了にしました' : '未対応に戻しました');
+  toast('未対応に戻しました');
   if (Store.settings().autoSync && Store.settings().gasUrl && navigator.onLine) syncNow(false);
 }
 
@@ -647,17 +758,24 @@ function renderHistory() {
 function exportCsv() {
   const list = filteredRecords();
   if (!list.length) return toast('出力するデータがありません', true);
-  const head = ['点検日', '点検場所', '点検機械', '号機', '点検者', '点検項目', '判定', '測定値', '単位', '項目所見', '備考', '総合判定', '登録日時'];
+  const head = ['点検日', '点検場所', '点検機械', '号機', '点検者', '点検項目', '判定', '測定値', '単位',
+    '項目所見', '備考', '総合判定', '登録日時', '対応状況', '対応日', '対応者', '対応内容', '当初判定'];
   const rows = [head];
   list.forEach(r => {
     const base = [r.date, siteLabel(r), r.machineName, r.unit || '', r.inspector || ''];
     if (!r.items || !r.items.length) {
-      rows.push(base.concat(['（その他）', '', '', '', '', r.note || '', JUDGE[r.status].label, r.createdAt || '']));
+      rows.push(base.concat(['（その他）', '', '', '', '', r.note || '', JUDGE[r.status].label, r.createdAt || '', '', '', '', '', '']));
     } else {
-      r.items.forEach(it => rows.push(base.concat([
-        it.name, it.judge ? JUDGE[it.judge].label : '未判定', it.value || '', it.unit || '',
-        it.note || '', r.note || '', JUDGE[r.status].label, r.createdAt || ''
-      ])));
+      r.items.forEach(it => {
+        const needs = it.judge === 'NG' || it.judge === 'CAUTION' || it.resolved;
+        rows.push(base.concat([
+          it.name, it.judge ? JUDGE[it.judge].label : '未判定', it.value || '', it.unit || '',
+          it.note || '', r.note || '', JUDGE[r.status].label, r.createdAt || '',
+          it.resolved ? '完了' : (needs ? '未対応' : ''),
+          it.resolvedAt || '', it.resolvedBy || '', it.resolvedNote || '',
+          it.originalJudge ? JUDGE[it.originalJudge].label : ''
+        ]));
+      });
     }
   });
   const csv = '﻿' + rows.map(r => r.map(Util.csvEscape).join(',')).join('\r\n');
