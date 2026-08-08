@@ -78,6 +78,27 @@
     </div>
   </section>
 
+  <!-- ========== 要対応リスト ========== -->
+  <section id="view-todo" class="view hidden">
+    <div class="card filters">
+      <div class="field inline">
+        <label for="todoSite">場所</label>
+        <select id="todoSite"></select>
+      </div>
+      <div class="field inline">
+        <label for="todoKind">対象</label>
+        <select id="todoKind">
+          <option value="">不良・要注意</option>
+          <option value="NG">不良のみ</option>
+          <option value="CAUTION">要注意のみ</option>
+        </select>
+      </div>
+      <label class="check" style="margin:0"><input type="checkbox" id="todoDone"> 対応完了分を表示</label>
+    </div>
+    <div id="todoSummary" class="hint"></div>
+    <div id="todoList"></div>
+  </section>
+
   <!-- ========== 履歴 ========== -->
   <section id="view-history" class="view hidden">
     <div class="card filters">
@@ -118,7 +139,7 @@
     <h2 class="sect">点検マトリクス（場所 × 機械）</h2>
     <p class="hint">〇=良 / △=要注意 / ×=不良 / 空欄=未点検</p>
     <div class="matrixwrap"><table id="dashMatrix" class="matrix"></table></div>
-    <h2 class="sect">要対応リスト</h2>
+    <h2 class="sect">要対応リスト（未対応のみ）</h2>
     <div id="dashIssues"></div>
   </section>
 
@@ -192,6 +213,7 @@
 
 <nav class="tabbar">
   <button class="tab active" data-view="inspect"><span>📋</span>点検</button>
+  <button class="tab" data-view="todo"><span>🚨</span>要対応<i id="todoBadge" class="tbadge hidden">0</i></button>
   <button class="tab" data-view="history"><span>🗂️</span>履歴</button>
   <button class="tab" data-view="dash"><span>📊</span>進捗</button>
   <button class="tab" data-view="settings"><span>⚙️</span>設定</button>

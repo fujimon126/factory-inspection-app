@@ -210,11 +210,21 @@ select{appearance:none;background-image:linear-gradient(45deg,transparent 50%,va
   border-top:1px solid var(--line);padding-bottom:var(--safe-b);
 }
 .tab{
-  flex:1;border:0;background:none;padding:9px 0 8px;font-size:11px;font-weight:700;color:var(--muted);
-  display:flex;flex-direction:column;align-items:center;gap:3px;font-family:inherit;
+  flex:1;border:0;background:none;padding:9px 0 8px;font-size:10px;font-weight:700;color:var(--muted);
+  display:flex;flex-direction:column;align-items:center;gap:3px;font-family:inherit;position:relative;
 }
-.tab span{font-size:21px;line-height:1}
+.tab span{font-size:20px;line-height:1}
 .tab.active{color:var(--blue)}
+.tbadge{position:absolute;top:3px;left:50%;margin-left:4px;min-width:18px;height:18px;padding:0 4px;
+  border-radius:9px;background:var(--ng);color:#fff;font-size:10px;font-style:normal;font-weight:700;
+  display:flex;align-items:center;justify-content:center}
+
+/* ---- 要対応リスト ---- */
+.rec.todo{flex-direction:row}
+.rec.donerec{opacity:.62;background:#f7f9fb}
+.doneinfo{color:var(--ok);font-weight:700}
+.todobtns{display:flex;gap:6px;margin-top:9px;flex-wrap:wrap}
+.todobtns .btn{flex:1 1 auto;min-width:88px}
 
 /* ---- 点検場所の編集 ---- */
 .siteedit{display:flex;align-items:center;gap:8px;margin-bottom:8px}

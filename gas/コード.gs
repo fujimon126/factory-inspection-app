@@ -19,7 +19,8 @@ var PHOTO_FOLDER = '工場点検_写真';
 var REC_HEAD = ['ID', '点検日', '年月', '点検場所', '点検機械', '号機', '点検者',
   '総合判定', '不良件数', '要注意件数', '未判定件数', '備考', '登録日時', '更新日時'];
 var DET_HEAD = ['ID', '点検日', '年月', '点検場所', '点検機械', '号機', '点検者',
-  '項目No', '点検項目', '判定', '測定値', '単位', '所見', '写真URL', '更新日時'];
+  '項目No', '点検項目', '判定', '測定値', '単位', '所見', '写真URL', '更新日時',
+  '対応状況', '対応日時', '対応者'];
 
 var JUDGE_LABEL = { OK: '良', CAUTION: '要注意', NG: '不良', NA: '対象外', '': '未判定' };
 
@@ -36,18 +37,9 @@ function 初期設定() {
   //    「型付きの列でセルの数値形式を設定することはできません」というエラーになるためです。
   //    集計は点検日（B列）の期間で行うので、表示形式は結果に影響しません。
 
-  // 判定の色分け（総合判定列）
-  safe_(function () {
-    var rng = rec.getRange('H2:H10000');
-    rec.setConditionalFormatRules([
-      SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo('不良')
-        .setBackground('#fdeceb').setFontColor('#d93025').setRanges([rng]).build(),
-      SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo('要注意')
-        .setBackground('#fff5e0').setFontColor('#b87700').setRanges([rng]).build(),
-      SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo('良')
-        .setBackground('#e7f6ec').setFontColor('#0f9d58').setRanges([rng]).build()
-    ]);
-  });
+  // 判定の色分け
+  safe_(function () { setRecColors_(rec); });
+  safe_(function () { setDetColors_(det); });
 
   // ダッシュボード（数式で自動集計）
   buildDashboard_(ss);
@@ -56,6 +48,69 @@ function 初期設定() {
   修復_日付と年月();
 
   return 'セットアップ完了';
+}
+
+/* ============ 判定の色分け ============
+   良＝緑 / 要注意＝黄 / 不良＝赤。判定セルは濃い色、行全体は薄い色で塗り分けます。 */
+var C_NG = { bg: '#d93025', fg: '#ffffff', row: '#fce8e6' };   // 不良
+var C_CA = { bg: '#f9ab00', fg: '#3c2a00', row: '#fff3d6' };   // 要注意
+var C_OK = { bg: '#0f9d58', fg: '#ffffff', row: '#e8f5ea' };   // 良
+var C_NA = { bg: '#e0e4e8', fg: '#5f6b76', row: '#ffffff' };   // 対象外・未判定
+
+/* 点検記録シート：総合判定(H)を濃く塗り、行全体を薄く色づけする */
+function setRecColors_(sh) {
+  var judge = sh.getRange('H2:H10000');       // 総合判定
+  var row = sh.getRange('A2:N10000');         // 行全体
+  var ngCount = sh.getRange('I2:I10000');     // 不良件数
+  var caCount = sh.getRange('J2:J10000');     // 要注意件数
+  sh.setConditionalFormatRules([
+    // 判定セル（濃い色＋白抜き文字）
+    rule_(judge, '不良', C_NG, true),
+    rule_(judge, '要注意', C_CA, true),
+    rule_(judge, '良', C_OK, true),
+    rule_(judge, '対象外', C_NA, false),
+    // 行全体（薄い色）… H列の値で判定する
+    rowRule_(row, '=$H2="不良"', C_NG.row),
+    rowRule_(row, '=$H2="要注意"', C_CA.row),
+    rowRule_(row, '=$H2="良"', C_OK.row),
+    // 不良・要注意の件数が1件以上あるセルを強調
+    numRule_(ngCount, C_NG),
+    numRule_(caCount, C_CA)
+  ]);
+}
+
+/* 点検明細シート：判定(J)と対応状況(P)を色分けし、行全体も薄く色づけする */
+function setDetColors_(sh) {
+  var judge = sh.getRange('J2:J10000');       // 判定
+  var row = sh.getRange('A2:R10000');         // 行全体
+  var state = sh.getRange('P2:P10000');       // 対応状況
+  sh.setConditionalFormatRules([
+    rule_(judge, '不良', C_NG, true),
+    rule_(judge, '要注意', C_CA, true),
+    rule_(judge, '良', C_OK, true),
+    rule_(judge, '対象外', C_NA, false),
+    rule_(state, '未対応', C_NG, true),
+    rule_(state, '完了', C_OK, true),
+    // 未対応の行だけ薄く色づけ（対応が終わった行は白に戻る）
+    rowRule_(row, '=AND($P2="未対応",$J2="不良")', C_NG.row),
+    rowRule_(row, '=AND($P2="未対応",$J2="要注意")', C_CA.row)
+  ]);
+}
+
+function rule_(range, text, c, bold) {
+  return SpreadsheetApp.newConditionalFormatRule()
+    .whenTextEqualTo(text)
+    .setBackground(c.bg).setFontColor(c.fg).setBold(!!bold)
+    .setRanges([range]).build();
+}
+function rowRule_(range, formula, bg) {
+  return SpreadsheetApp.newConditionalFormatRule()
+    .whenFormulaSatisfied(formula).setBackground(bg).setRanges([range]).build();
+}
+function numRule_(range, c) {
+  return SpreadsheetApp.newConditionalFormatRule()
+    .whenNumberGreaterThan(0).setBackground(c.bg).setFontColor(c.fg).setBold(true)
+    .setRanges([range]).build();
 }
 
 /* 見た目の設定など、失敗しても処理を続けてよいものを包む。
@@ -95,13 +150,20 @@ function buildDashboard_(ss) {
   dash.getRange('D5').setFormula(q_(SH_REC + '!A:N',
     'select H, count(A) ', 'group by H label H \'総合判定\', count(A) \'件数\'', 'データなし'));
 
-  dash.getRange('G4').setValue('■ 要対応（不良・要注意）項目一覧').setFontWeight('bold');
+  dash.getRange('G4').setValue('■ 要対応（未対応の不良・要注意）').setFontWeight('bold');
+  // P列（対応状況）が「未対応」の行だけを表示 … アプリで対応完了にすると自動で消える
   // format B 'yyyy-mm-dd' … これが無いと点検日が日付の内部値（数字）で表示される
   dash.getRange('G5').setFormula(
-    '=IFERROR(QUERY(' + SH_DET + '!A:O,"select B, D, E, F, I, J, M, N where (J = \'不良\' or J = \'要注意\') "' +
+    '=IFERROR(QUERY(' + SH_DET + '!A:R,"select B, D, E, F, I, J, M, N where P = \'未対応\' "' +
     andYm_() +
     '"order by B desc label B \'点検日\', D \'場所\', E \'機械\', F \'号機\', I \'項目\', J \'判定\', M \'所見\', N \'写真\' format B \'yyyy-mm-dd\'",1),"要対応なし")');
   safe_(function () { dash.getRange('G5:G').setNumberFormat('yyyy-mm-dd'); });
+
+  dash.getRange('A26').setValue('■ 対応完了した項目').setFontWeight('bold');
+  dash.getRange('A27').setFormula(
+    '=IFERROR(QUERY(' + SH_DET + '!A:R,"select B, D, E, I, J, Q, R where P = \'完了\' "' +
+    andYm_() +
+    '"order by Q desc label B \'点検日\', D \'場所\', E \'機械\', I \'項目\', J \'判定\', Q \'対応日\', R \'対応者\' format B \'yyyy-mm-dd\', Q \'yyyy-mm-dd\'",1),"完了分なし")');
 
   dash.getRange('A20').setValue('■ 機械別 点検回数').setFontWeight('bold');
   dash.getRange('A21').setFormula(q_(SH_REC + '!A:N',
@@ -186,7 +248,10 @@ function 診断_データ形式() {
 function getSheet_(ss, name, head) {
   var sh = ss.getSheetByName(name);
   if (!sh) sh = ss.insertSheet(name);
-  if (sh.getLastRow() === 0 || String(sh.getRange(1, 1).getValue()) !== head[0]) {
+  // 見出しが未設定、または列が増えた場合は書き直す（バージョンアップ対応）
+  var cur = sh.getLastColumn() > 0
+    ? sh.getRange(1, 1, 1, Math.max(sh.getLastColumn(), head.length)).getValues()[0] : [];
+  if (cur.slice(0, head.length).join('\t') !== head.join('\t')) {
     sh.getRange(1, 1, 1, head.length).setValues([head])
       .setFontWeight('bold').setBackground('#0f4c81').setFontColor('#ffffff');
   }
@@ -248,9 +313,13 @@ function saveRecord_(rec) {
   deleteDetail_(detSh, rec.id);
   if (items.length) {
     var detRows = items.map(function (it, i) {
+      // 不良・要注意の項目だけ対応状況を持たせる（それ以外は空欄）
+      var needsAction = (it.judge === 'NG' || it.judge === 'CAUTION');
+      var state = needsAction ? (it.resolved ? '完了' : '未対応') : '';
       return [rec.id, toDate_(rec.date), ym, rec.site, rec.machineName, rec.unit || '', rec.inspector || '',
         i + 1, it.name, JUDGE_LABEL[it.judge] || '未判定', it.value === '' ? '' : it.value,
-        it.unit || '', it.note || '', it.photoUrl || '', now];
+        it.unit || '', it.note || '', it.photoUrl || '', now,
+        state, it.resolvedAt ? new Date(it.resolvedAt) : '', it.resolvedBy || ''];
     });
     detSh.getRange(detSh.getLastRow() + 1, 1, detRows.length, DET_HEAD.length).setValues(detRows);
   }
@@ -322,7 +391,10 @@ function listRecords_(ym) {
     (byId[d[0]] = byId[d[0]] || []).push({
       name: d[8], type: d[11] ? 'num' : 'judge', unit: d[11] || '',
       judge: labelToKey_(d[9]), value: d[10] === '' ? '' : String(d[10]),
-      note: d[12] || '', photo: '', photoUrl: d[13] || ''
+      note: d[12] || '', photo: '', photoUrl: d[13] || '',
+      resolved: d[15] === '完了',
+      resolvedAt: d[16] ? new Date(d[16]).toISOString() : '',
+      resolvedBy: d[17] || ''
     });
   });
 

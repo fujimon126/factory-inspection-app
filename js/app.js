@@ -21,7 +21,7 @@ function busy(on, text) {
   $('#overlay').classList.toggle('hidden', !on);
 }
 function show(view) {
-  ['inspect', 'form', 'history', 'dash', 'settings', 'master'].forEach(v => {
+  ['inspect', 'form', 'todo', 'history', 'dash', 'settings', 'master'].forEach(v => {
     $('#view-' + v).classList.toggle('hidden', v !== view);
   });
   currentView = view;
@@ -29,11 +29,12 @@ function show(view) {
   $$('.tab').forEach(b => b.classList.toggle('active', b.dataset.view === tabOf));
   $('#btnBack').classList.toggle('hidden', view !== 'form' && view !== 'master');
   $('#appTitle').textContent = {
-    inspect: '工場点検', form: '点検項目', history: '点検履歴',
+    inspect: '工場点検', form: '点検項目', todo: '要対応リスト', history: '点検履歴',
     dash: '進捗状況', settings: '設定', master: '点検機械・項目の編集'
   }[view];
   window.scrollTo(0, 0);
   if (view === 'inspect') renderMachineGrid();
+  if (view === 'todo') renderTodo();
   if (view === 'history') renderHistory();
   if (view === 'dash') renderDash();
   if (view === 'settings') renderSettings();
@@ -44,11 +45,14 @@ function show(view) {
 function renderSiteOptions() {
   const sites = Store.sites();
   const cur = $('#inpSite').value, hisCur = $('#hisSite').value;
+  const todoCur = $('#todoSite').value;
   const opts = sites.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('');
   $('#inpSite').innerHTML = opts;
   $('#hisSite').innerHTML = '<option value="">すべての場所</option>' + opts;
+  $('#todoSite').innerHTML = '<option value="">すべての場所</option>' + opts;
   if (sites.some(s => s.id === cur)) $('#inpSite').value = cur;
   if (hisCur === '' || sites.some(s => s.id === hisCur)) $('#hisSite').value = hisCur;
+  if (todoCur === '' || sites.some(s => s.id === todoCur)) $('#todoSite').value = todoCur;
 }
 function siteName(id) { return Store.siteName(id); }
 /* 記録の表示用工場名。名称変更後は現在の名称を表示する */
@@ -84,6 +88,7 @@ function init() {
   $('#btnDelete').addEventListener('click', deleteRecord);
   $$('[data-bulk]').forEach(b => b.addEventListener('click', () => bulkSet(b.dataset.bulk)));
   ['#hisMonth', '#hisSite', '#hisStatus'].forEach(s => $(s).addEventListener('change', renderHistory));
+  ['#todoSite', '#todoKind', '#todoDone'].forEach(s => $(s).addEventListener('change', renderTodo));
   $('#btnCsv').addEventListener('click', exportCsv);
   $('#dashMonth').addEventListener('change', renderDash);
   $('#btnPull').addEventListener('click', pullFromSheet);
@@ -102,6 +107,7 @@ function init() {
   updateNet();
   renderMachineGrid();
   updatePendingBadge();
+  updateTodoBadge();
 
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js').catch(() => { /* 未対応環境は無視 */ });
@@ -320,6 +326,7 @@ async function saveRecord() {
   editing.synced = false;
   Store.upsert(editing);
   updatePendingBadge();
+  updateTodoBadge();
   toast('保存しました');
   show('inspect');
 
@@ -363,6 +370,7 @@ async function pullFromSheet() {
     const r = await Store.pull($('#dashMonth').value);
     toast(`シートから ${r.total} 件取得（新規 ${r.added} 件）`);
     renderDash();
+    updateTodoBadge();
   } catch (e) {
     toast('取得に失敗：' + e.message, true);
   } finally {
@@ -482,6 +490,114 @@ async function doShare(data) {
   }
 }
 
+/* ---------------- 要対応リスト ---------------- */
+/* 全記録から不良・要注意の項目を取り出す */
+function todoItems(includeDone) {
+  const out = [];
+  Store.records().forEach(r => {
+    (r.items || []).forEach((it, idx) => {
+      if (it.judge !== 'NG' && it.judge !== 'CAUTION') return;
+      if (!includeDone && it.resolved) return;
+      out.push({ r, it, idx });
+    });
+  });
+  // 不良を先に、その中で日付の新しい順
+  return out.sort((a, b) =>
+    (a.it.judge === b.it.judge ? 0 : a.it.judge === 'NG' ? -1 : 1) ||
+    b.r.date.localeCompare(a.r.date));
+}
+function openTodoCount() {
+  return todoItems(false).length;
+}
+function updateTodoBadge() {
+  const n = openTodoCount();
+  const b = $('#todoBadge');
+  b.textContent = n > 99 ? '99+' : n;
+  b.classList.toggle('hidden', n === 0);
+}
+
+function renderTodo() {
+  const showDone = $('#todoDone').checked;
+  const siteId = $('#todoSite').value;
+  const kind = $('#todoKind').value;
+  const all = todoItems(showDone).filter(x =>
+    (!siteId || sameSite(x.r, siteId)) && (!kind || x.it.judge === kind));
+
+  const open = openTodoCount();
+  $('#todoSummary').textContent = open
+    ? `未対応 ${open} 件（不良 ${todoItems(false).filter(x => x.it.judge === 'NG').length} 件 / 要注意 ${todoItems(false).filter(x => x.it.judge === 'CAUTION').length} 件）`
+    : '未対応の項目はありません';
+
+  if (!all.length) {
+    $('#todoList').innerHTML = '<p class="empty">該当する項目はありません</p>';
+    updateTodoBadge();
+    return;
+  }
+
+  $('#todoList').innerHTML = all.map(({ r, it, idx }) => {
+    const done = !!it.resolved;
+    const photo = Util.hasPhoto(it)
+      ? `<div class="photos"><button class="pthumb" data-photo-rid="${r.id}" data-photo-i="${idx}">
+           <img src="${Util.photoSrc(it)}" alt="${esc(it.name)}" loading="lazy"></button></div>` : '';
+    return `<div class="rec todo ${done ? 'donerec' : ''}">
+      <div class="stat ${JUDGE[it.judge].cls}">${JUDGE[it.judge].label[0]}</div>
+      <div class="body">
+        <div class="t1">${esc(it.name)}${it.value ? `　<span class="t2">${esc(it.value)}${esc(it.unit || '')}</span>` : ''}</div>
+        <div class="t2">${Util.fmtDate(r.date)}　${esc(siteLabel(r))}　${esc(r.machineName)}${r.unit ? ' ' + esc(r.unit) : ''}</div>
+        ${it.note ? `<div class="t2">所見：${esc(it.note)}</div>` : ''}
+        ${done ? `<div class="t2 doneinfo">✔ 対応完了　${esc(it.resolvedAt ? Util.fmtDate(it.resolvedAt.slice(0, 10)) : '')}${it.resolvedBy ? '　' + esc(it.resolvedBy) : ''}</div>` : ''}
+        ${photo}
+        <div class="todobtns">
+          ${done
+        ? `<button class="btn ghost sm" data-undo="${r.id}" data-i="${idx}">未対応に戻す</button>`
+        : `<button class="btn primary sm" data-done="${r.id}" data-i="${idx}">対応完了</button>`}
+          <button class="btn ghost sm" data-share="${r.id}">共有</button>
+          <button class="btn ghost sm" data-open="${r.id}">記録を開く</button>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+
+  bindPhotoStrips('#todoList');
+  $$('#todoList [data-done]').forEach(b =>
+    b.addEventListener('click', () => resolveItem(b.dataset.done, +b.dataset.i, true)));
+  $$('#todoList [data-undo]').forEach(b =>
+    b.addEventListener('click', () => resolveItem(b.dataset.undo, +b.dataset.i, false)));
+  $$('#todoList [data-share]').forEach(b =>
+    b.addEventListener('click', () => shareRecord(b.dataset.share)));
+  $$('#todoList [data-open]').forEach(b => b.addEventListener('click', () => {
+    const r = Store.get(b.dataset.open);
+    $('#inpDate').value = r.date;
+    const sid = r.siteId || Store.siteIdByName(r.site);
+    if (sid) $('#inpSite').value = sid;
+    openForm(r.machineId, r.id);
+  }));
+  updateTodoBadge();
+}
+
+/* 対応完了／未対応に戻す。スプレッドシートにも反映するため未送信に戻す */
+function resolveItem(rid, idx, done) {
+  const rec = Store.get(rid);
+  if (!rec || !rec.items[idx]) return;
+  const it = rec.items[idx];
+  if (done) {
+    if (!confirm(`「${it.name}」を対応完了にします。\n（要対応リストから外れ、スプレッドシートにも記録されます）\n\nよろしいですか？`)) return;
+    it.resolved = true;
+    it.resolvedAt = new Date().toISOString();
+    it.resolvedBy = $('#inpInspector').value.trim() || Store.settings().inspector || '';
+  } else {
+    it.resolved = false;
+    it.resolvedAt = '';
+    it.resolvedBy = '';
+  }
+  rec.synced = false;                 // シートへ再送信して対応状況を反映させる
+  Store.upsert(rec);
+  updatePendingBadge();
+  renderTodo();
+  toast(done ? '対応完了にしました' : '未対応に戻しました');
+  if (Store.settings().autoSync && Store.settings().gasUrl && navigator.onLine) syncNow(false);
+}
+
 /* ---------------- 履歴 ---------------- */
 function filteredRecords() {
   const ym = $('#hisMonth').value, siteId = $('#hisSite').value, st = $('#hisStatus').value;
@@ -569,14 +685,15 @@ function renderDash() {
   const doneTargets = sites.reduce((n, s) =>
     n + (targets[s.id] || []).filter(mid => doneKeys.has(s.id + '|' + mid)).length, 0);
   const pct = totalTargets ? Math.round(doneTargets / totalTargets * 100) : 0;
-  const ngItems = recs.flatMap(r => (r.items || []).filter(i => i.judge === 'NG').map(i => ({ r, i })));
-  const caItems = recs.flatMap(r => (r.items || []).filter(i => i.judge === 'CAUTION').map(i => ({ r, i })));
+  // 要対応リストは未対応のみ表示（対応完了したものは除く）
+  const ngItems = recs.flatMap(r => (r.items || []).filter(i => i.judge === 'NG' && !i.resolved).map(i => ({ r, i })));
+  const caItems = recs.flatMap(r => (r.items || []).filter(i => i.judge === 'CAUTION' && !i.resolved).map(i => ({ r, i })));
 
   $('#dashStats').innerHTML = `
     <div class="stat-card"><div class="n">${pct}<small style="font-size:14px">%</small></div><div class="l">点検実施率</div></div>
     <div class="stat-card okc"><div class="n">${doneTargets}/${totalTargets}</div><div class="l">実施項目 / 対象項目</div></div>
-    <div class="stat-card ngc"><div class="n">${ngItems.length}</div><div class="l">不良項目</div></div>
-    <div class="stat-card cac"><div class="n">${caItems.length}</div><div class="l">要注意項目</div></div>`;
+    <div class="stat-card ngc"><div class="n">${ngItems.length}</div><div class="l">未対応の不良</div></div>
+    <div class="stat-card cac"><div class="n">${caItems.length}</div><div class="l">未対応の要注意</div></div>`;
 
   // 工場別
   $('#dashSites').innerHTML = sites.map(s => {
