@@ -225,6 +225,31 @@ select{appearance:none;background-image:linear-gradient(45deg,transparent 50%,va
   background:#fff;color:var(--ng);font-size:18px;font-weight:700}
 .delsite:disabled{color:#c8d2dc}
 
+/* ---- 点検機械・点検項目の編集 ---- */
+.mcardedit{background:var(--card);border:1px solid var(--line);border-radius:12px;margin-bottom:8px;overflow:hidden}
+.mcardedit summary{padding:12px;font-weight:700;font-size:15px;cursor:pointer;display:flex;align-items:center;gap:8px}
+.mcardedit[open] summary{border-bottom:1px solid var(--line);background:#f6f9fc}
+.mcardedit .mico{font-size:20px}
+.mcardedit .mcount{margin-left:auto;font-size:11px;color:var(--muted);font-weight:600}
+.mbody{padding:10px 12px 12px}
+.mhead{display:flex;gap:6px;align-items:center;margin-bottom:10px}
+.mhead .micon{flex:0 0 52px;text-align:center;padding:10px 4px}
+.mhead input[type=text]:not(.micon){flex:1}
+/* スマホでは項目名を1行目、種別・単位・並べ替えを2行目に折り返す */
+.mrow{display:flex;flex-wrap:wrap;gap:5px;align-items:center;
+  margin-bottom:9px;padding-bottom:9px;border-bottom:1px dashed var(--line)}
+.mrow:last-child{border-bottom:0;margin-bottom:0}
+.mrow .mno{flex:0 0 18px;font-size:11px;color:var(--muted);font-weight:700;text-align:right}
+.mrow .mname{flex:1 1 calc(100% - 28px);min-width:0;padding:10px}
+.mrow .mtype{flex:0 0 108px;margin-left:23px;padding:9px 20px 9px 6px;font-size:13px}
+.mrow .munit{flex:0 0 66px;padding:9px 6px;font-size:13px}
+.miconbtn{flex:0 0 auto;width:32px;height:38px;border:1px solid var(--line);background:#fff;
+  border-radius:8px;font-size:14px;color:var(--blue);font-family:inherit}
+.miconbtn:disabled{color:#cdd6df}
+.miconbtn.del{color:var(--ng)}
+.mfoot{display:flex;gap:8px;margin-top:10px}
+.mfoot .btn{flex:1}
+
 /* ---- 対象設定 ---- */
 .tgt{border:1px solid var(--line);border-radius:10px;margin-bottom:8px;overflow:hidden}
 .tgt summary{padding:11px 12px;font-weight:700;font-size:14px;background:#f6f9fc;cursor:pointer}
@@ -236,4 +261,8 @@ select{appearance:none;background-image:linear-gradient(45deg,transparent 50%,va
   .grid{grid-template-columns:repeat(3,1fr)}
   .stats{grid-template-columns:repeat(4,1fr)}
   .view{max-width:760px;margin:0 auto}
+  /* 画面が広いときは点検項目を1行に収める */
+  .mrow{flex-wrap:nowrap;border-bottom:0;padding-bottom:0;margin-bottom:6px}
+  .mrow .mname{flex:1 1 auto}
+  .mrow .mtype{margin-left:0}
 }

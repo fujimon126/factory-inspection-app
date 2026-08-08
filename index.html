@@ -122,6 +122,23 @@
     <div id="dashIssues"></div>
   </section>
 
+  <!-- ========== 点検機械・点検項目の編集 ========== -->
+  <section id="view-master" class="view hidden">
+    <div class="card">
+      <p class="hint" style="margin:0">
+        点検機械の追加・名称変更・並べ替えと、機械ごとの点検項目の編集ができます。<br>
+        変更内容はこの端末に保存され、点検画面にすぐ反映されます。
+      </p>
+    </div>
+    <div id="masterEditor"></div>
+    <div class="actionbar">
+      <button id="btnAddMachine" class="btn primary">＋ 点検機械を追加</button>
+    </div>
+    <div class="actionbar">
+      <button id="btnResetMachines" class="btn ghost danger">初期状態（22機種）に戻す</button>
+    </div>
+  </section>
+
   <!-- ========== 設定 ========== -->
   <section id="view-settings" class="view hidden">
     <div class="card">
@@ -146,6 +163,12 @@
       <h2 class="sect first">点検場所の登録</h2>
       <p class="hint">実際の工場名を入力してください。名称はこの端末内にのみ保存されます（アプリのプログラムには含まれません）。</p>
       <div id="siteEditor"></div>
+    </div>
+
+    <div class="card">
+      <h2 class="sect first">点検機械・点検項目の編集</h2>
+      <p class="hint">点検機械の追加・変更や、機械ごとの点検項目の追加・変更ができます。</p>
+      <button id="btnOpenMaster" class="btn ghost" style="width:100%">編集画面を開く</button>
     </div>
 
     <div class="card">

@@ -22,7 +22,10 @@ const JUDGE = {
   NA: { key: 'NA', label: '対象外', cls: 'na' }
 };
 
-const MACHINES = [
+/* 点検機械と点検項目の初期値。
+   アプリの「設定 → 点検機械・点検項目の編集」で追加・変更した内容が優先されます
+   （変更内容は端末内に保存されます）。 */
+const DEFAULT_MACHINES = [
   {
     id: 'm01', name: '回収乾燥機', icon: '🌀',
     items: [
@@ -240,4 +243,3 @@ const MACHINES = [
   }
 ];
 
-const MACHINE_BY_ID = Object.fromEntries(MACHINES.map(m => [m.id, m]));

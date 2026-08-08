@@ -6,6 +6,7 @@ const LS_RECORDS = 'fi_records_v1';
 const LS_SETTINGS = 'fi_settings_v1';
 const LS_TARGETS = 'fi_targets_v1';
 const LS_SITES = 'fi_sites_v1';
+const LS_MACHINES = 'fi_machines_v1';
 
 const Store = {
   /* ---------- 設定 ---------- */
@@ -41,16 +42,54 @@ const Store = {
     return s ? s.id : '';
   },
 
+  /* ---------- 点検機械・点検項目（編集可能なマスター） ---------- */
+  machines() {
+    try {
+      const m = JSON.parse(localStorage.getItem(LS_MACHINES) || 'null');
+      if (Array.isArray(m) && m.length) return m;
+    } catch (e) { /* 破損時は初期値 */ }
+    return JSON.parse(JSON.stringify(DEFAULT_MACHINES));
+  },
+  saveMachines(list) {
+    localStorage.setItem(LS_MACHINES, JSON.stringify(list));
+  },
+  resetMachines() {
+    localStorage.removeItem(LS_MACHINES);
+  },
+  machineById(id) {
+    return this.machines().find(m => m.id === id) || null;
+  },
+  // 点検項目が無い機械は「備考欄のみ」（例：その他）として扱う
+  isFree(m) {
+    return !m || !m.items || m.items.length === 0;
+  },
+  // 進捗集計の対象になる機械（備考欄のみの機械は除く）
+  countedMachines() {
+    return this.machines().filter(m => !this.isFree(m));
+  },
+  newMachineId() {
+    const used = new Set(this.machines().map(m => m.id));
+    let n = 1;
+    while (used.has('m' + String(n).padStart(2, '0'))) n++;
+    return 'm' + String(n).padStart(2, '0');
+  },
+
   /* ---------- 点検対象マスター（場所×機械／キーは場所ID） ---------- */
   targets() {
     let t = {};
     try {
       t = JSON.parse(localStorage.getItem(LS_TARGETS) || '{}') || {};
     } catch (e) { /* 破損時は既定値 */ }
-    // 未設定の場所は「その他を除く全機械」を既定の対象とする
-    const def = MACHINES.filter(m => !m.freeOnly).map(m => m.id);
+    // 未設定の場所は「備考欄のみを除く全機械」を既定の対象とする
+    const def = this.countedMachines().map(m => m.id);
     this.sites().forEach(s => { if (!t[s.id]) t[s.id] = def.slice(); });
     return t;
+  },
+  // 新しく追加した機械を、全ての場所の点検対象に加える
+  addTargetToAllSites(mid) {
+    const t = this.targets();
+    Object.keys(t).forEach(sid => { if (t[sid].indexOf(mid) < 0) t[sid].push(mid); });
+    this.saveTargets(t);
   },
   saveTargets(t) {
     localStorage.setItem(LS_TARGETS, JSON.stringify(t));

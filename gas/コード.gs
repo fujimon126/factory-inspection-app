@@ -87,9 +87,9 @@ function buildDashboard_(ss) {
   dash.getRange('C2').setFormula('=IF($B$2="","（空欄のため全期間を集計中）","集計対象："&' + YM_ + '&"　※空欄にすると全期間")')
     .setFontColor('#6b7b8c');
 
-  dash.getRange('A4').setValue('■ 工場別 点検台数').setFontWeight('bold');
+  dash.getRange('A4').setValue('■ 工場別 点検機械項目').setFontWeight('bold');
   dash.getRange('A5').setFormula(q_(SH_REC + '!A:N',
-    'select D, count(A) ', 'group by D label D \'点検場所\', count(A) \'点検台数\'', 'データなし'));
+    'select D, count(A) ', 'group by D label D \'点検場所\', count(A) \'点検機械項目\'', 'データなし'));
 
   dash.getRange('D4').setValue('■ 判定内訳').setFontWeight('bold');
   dash.getRange('D5').setFormula(q_(SH_REC + '!A:N',

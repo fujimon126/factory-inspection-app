@@ -21,20 +21,23 @@ function busy(on, text) {
   $('#overlay').classList.toggle('hidden', !on);
 }
 function show(view) {
-  ['inspect', 'form', 'history', 'dash', 'settings'].forEach(v => {
+  ['inspect', 'form', 'history', 'dash', 'settings', 'master'].forEach(v => {
     $('#view-' + v).classList.toggle('hidden', v !== view);
   });
   currentView = view;
-  const tabOf = view === 'form' ? 'inspect' : view;
+  const tabOf = view === 'form' ? 'inspect' : (view === 'master' ? 'settings' : view);
   $$('.tab').forEach(b => b.classList.toggle('active', b.dataset.view === tabOf));
-  $('#btnBack').classList.toggle('hidden', view !== 'form');
-  $('#appTitle').textContent =
-    { inspect: '工場点検', form: '点検項目', history: '点検履歴', dash: '進捗状況', settings: '設定' }[view];
+  $('#btnBack').classList.toggle('hidden', view !== 'form' && view !== 'master');
+  $('#appTitle').textContent = {
+    inspect: '工場点検', form: '点検項目', history: '点検履歴',
+    dash: '進捗状況', settings: '設定', master: '点検機械・項目の編集'
+  }[view];
   window.scrollTo(0, 0);
   if (view === 'inspect') renderMachineGrid();
   if (view === 'history') renderHistory();
   if (view === 'dash') renderDash();
   if (view === 'settings') renderSettings();
+  if (view === 'master') renderMaster();
 }
 
 /* 点検場所のプルダウンを設定内容から作り直す（値は場所ID） */
@@ -67,7 +70,10 @@ function init() {
 
   // イベント
   $$('.tab').forEach(b => b.addEventListener('click', () => show(b.dataset.view)));
-  $('#btnBack').addEventListener('click', () => show('inspect'));
+  $('#btnBack').addEventListener('click', () => show(currentView === 'master' ? 'settings' : 'inspect'));
+  $('#btnOpenMaster').addEventListener('click', () => show('master'));
+  $('#btnAddMachine').addEventListener('click', addMachine);
+  $('#btnResetMachines').addEventListener('click', resetMachines);
   $('#inpDate').addEventListener('change', renderMachineGrid);
   $('#inpSite').addEventListener('change', () => {
     localStorage.setItem('fi_lastSite', $('#inpSite').value);
@@ -119,9 +125,9 @@ function renderMachineGrid() {
   const targets = Store.targets()[siteId] || [];
 
   $('#dayHint').textContent =
-    `${Util.fmtDate(date)}　${siteName(siteId)}　本日 ${todays.length} 件登録済 / 対象 ${targets.length} 台`;
+    `${Util.fmtDate(date)}　${siteName(siteId)}　本日 ${todays.length} 件登録済 / 対象 ${targets.length} 項目`;
 
-  $('#machineGrid').innerHTML = MACHINES.map((m, i) => {
+  $('#machineGrid').innerHTML = Store.machines().map((m, i) => {
     const recs = todays.filter(r => r.machineId === m.id);
     const st = recs.length ? worstStatus(recs) : null;
     const flag = st ? `<span class="flag ${JUDGE[st].cls}">${recs.length > 1 ? recs.length + '件 ' : ''}${JUDGE[st].label}</span>` : '';
@@ -154,7 +160,7 @@ function onPickMachine(mid) {
   // 既存記録あり → 編集 or 新規（別号機）を選択
   const names = exist.map((r, i) => `${i + 1}. ${r.unit || '（号機未入力）'}／${JUDGE[r.status].label}`).join('\n');
   const ans = prompt(
-    `${MACHINE_BY_ID[mid].name} はこの日すでに登録があります。\n${names}\n\n編集する番号を入力（新規追加は「n」）`,
+    `${Store.machineById(mid).name} はこの日すでに登録があります。\n${names}\n\n編集する番号を入力（新規追加は「n」）`,
     '1'
   );
   if (ans === null) return;
@@ -165,7 +171,8 @@ function onPickMachine(mid) {
 
 /* ---------------- ④ 点検項目フォーム ---------------- */
 function openForm(mid, recId) {
-  const m = MACHINE_BY_ID[mid];
+  const m = Store.machineById(mid);
+  if (!m) return toast('この点検機械は削除されています', true);
   if (recId) {
     editing = JSON.parse(JSON.stringify(Store.get(recId)));
   } else {
@@ -198,8 +205,8 @@ function openForm(mid, recId) {
 }
 
 function renderItems() {
-  const m = MACHINE_BY_ID[editing.machineId];
-  if (m.freeOnly) {
+  const m = Store.machineById(editing.machineId) || { items: [] };
+  if (Store.isFree(m)) {
     $('#itemList').innerHTML =
       `<div class="card"><p class="hint" style="margin:0">「その他」は備考欄に点検内容を記入してください。</p></div>`;
     updateFormProgress();
@@ -296,9 +303,9 @@ async function saveRecord() {
   editing.note = $('#inpNote').value.trim();
   editing.inspector = $('#inpInspector').value.trim();
   if (editing.siteId) editing.site = siteName(editing.siteId) || editing.site; // 最新の工場名を反映
-  const m = MACHINE_BY_ID[editing.machineId];
+  const m = Store.machineById(editing.machineId) || { items: [] };
 
-  if (m.freeOnly) {
+  if (Store.isFree(m)) {
     if (!editing.note) return toast('備考欄を入力してください', true);
   } else {
     const done = editing.items.filter(it => it.judge).length;
@@ -309,7 +316,7 @@ async function saveRecord() {
     if (ngNoNote && !confirm('「不良」の項目に所見が未記入です。このまま保存しますか？')) return;
   }
 
-  editing.status = m.freeOnly ? 'NA' : Util.statusOf(editing);
+  editing.status = Store.isFree(m) ? 'NA' : Util.statusOf(editing);
   editing.synced = false;
   Store.upsert(editing);
   updatePendingBadge();
@@ -567,7 +574,7 @@ function renderDash() {
 
   $('#dashStats').innerHTML = `
     <div class="stat-card"><div class="n">${pct}<small style="font-size:14px">%</small></div><div class="l">点検実施率</div></div>
-    <div class="stat-card okc"><div class="n">${doneTargets}/${totalTargets}</div><div class="l">実施台数 / 対象</div></div>
+    <div class="stat-card okc"><div class="n">${doneTargets}/${totalTargets}</div><div class="l">実施項目 / 対象項目</div></div>
     <div class="stat-card ngc"><div class="n">${ngItems.length}</div><div class="l">不良項目</div></div>
     <div class="stat-card cac"><div class="n">${caItems.length}</div><div class="l">要注意項目</div></div>`;
 
@@ -577,7 +584,7 @@ function renderDash() {
     const d = tg.filter(mid => doneKeys.has(s.id + '|' + mid)).length;
     const p = tg.length ? Math.round(d / tg.length * 100) : 0;
     return `<div class="siterow">
-      <div class="top">${esc(s.name)}<span>${d} / ${tg.length} 台　${p}%</span></div>
+      <div class="top">${esc(s.name)}<span>${d} / ${tg.length} 項目　${p}%</span></div>
       <div class="bar"><i style="width:${p}%"></i></div>
     </div>`;
   }).join('');
@@ -585,7 +592,7 @@ function renderDash() {
   // マトリクス
   const head = '<thead><tr><th>機械 \\ 場所</th>' +
     sites.map(s => `<th>${esc(s.name.replace(/工場$/, ''))}</th>`).join('') + '</tr></thead>';
-  const body = MACHINES.filter(m => !m.freeOnly).map(m => {
+  const body = Store.countedMachines().map(m => {
     const tds = sites.map(s => {
       const isTarget = (targets[s.id] || []).includes(m.id);
       if (!isTarget) return '<td class="off">－</td>';
@@ -672,10 +679,10 @@ function renderTargetEditor() {
   const tg = Store.targets();
   $('#targetEditor').innerHTML = Store.sites().map(site => {
     const on = tg[site.id] || [];
-    const list = MACHINES.filter(m => !m.freeOnly).map(m =>
-      `<label><input type="checkbox" data-site="${site.id}" value="${m.id}" ${on.includes(m.id) ? 'checked' : ''}>${m.name}</label>`
+    const list = Store.countedMachines().map(m =>
+      `<label><input type="checkbox" data-site="${site.id}" value="${m.id}" ${on.includes(m.id) ? 'checked' : ''}>${esc(m.name)}</label>`
     ).join('');
-    return `<details class="tgt"><summary>${esc(site.name)}（${on.length}台）</summary><div class="list">${list}</div></details>`;
+    return `<details class="tgt"><summary>${esc(site.name)}（${on.length}項目）</summary><div class="list">${list}</div></details>`;
   }).join('');
 
   $$('#targetEditor input').forEach(cb => cb.addEventListener('change', () => {
@@ -683,10 +690,183 @@ function renderTargetEditor() {
     const sid = cb.dataset.site;
     const set = new Set(t[sid] || []);
     cb.checked ? set.add(cb.value) : set.delete(cb.value);
-    t[sid] = MACHINES.filter(m => set.has(m.id)).map(m => m.id);
+    t[sid] = Store.countedMachines().filter(m => set.has(m.id)).map(m => m.id);
     Store.saveTargets(t);
-    cb.closest('details').querySelector('summary').textContent = `${Store.siteName(sid)}（${t[sid].length}台）`;
+    cb.closest('details').querySelector('summary').textContent = `${Store.siteName(sid)}（${t[sid].length}項目）`;
   }));
+}
+
+/* ---------------- 点検機械・点検項目の編集 ---------------- */
+let openMachineId = null;   // 開いている機械（再描画時に開いたままにする）
+
+function renderMaster() {
+  const list = Store.machines();
+  $('#masterEditor').innerHTML = list.map((m, mi) => {
+    const items = (m.items || []).map((it, ii) => `
+      <div class="mrow">
+        <span class="mno">${ii + 1}</span>
+        <input type="text" class="mname" value="${esc(it.name)}" placeholder="点検項目名"
+               data-mid="${m.id}" data-ii="${ii}" data-f="name">
+        <select class="mtype" data-mid="${m.id}" data-ii="${ii}" data-f="type">
+          <option value="judge" ${it.type !== 'num' ? 'selected' : ''}>判定のみ</option>
+          <option value="num" ${it.type === 'num' ? 'selected' : ''}>数値+判定</option>
+        </select>
+        <input type="text" class="munit ${it.type === 'num' ? '' : 'hidden'}" value="${esc(it.unit || '')}"
+               placeholder="単位" data-mid="${m.id}" data-ii="${ii}" data-f="unit">
+        <button class="miconbtn" data-move-item="${m.id}" data-ii="${ii}" data-dir="-1" ${ii === 0 ? 'disabled' : ''}>↑</button>
+        <button class="miconbtn" data-move-item="${m.id}" data-ii="${ii}" data-dir="1" ${ii === (m.items.length - 1) ? 'disabled' : ''}>↓</button>
+        <button class="miconbtn del" data-del-item="${m.id}" data-ii="${ii}">×</button>
+      </div>`).join('');
+
+    return `<details class="mcardedit" ${openMachineId === m.id ? 'open' : ''} data-machine="${m.id}">
+      <summary><span class="mico">${m.icon || '🔧'}</span>${esc(m.name)}
+        <span class="mcount">${(m.items || []).length ? (m.items.length + '項目') : '備考のみ'}</span></summary>
+      <div class="mbody">
+        <div class="mhead">
+          <input type="text" class="micon" value="${esc(m.icon || '')}" maxlength="2" placeholder="🔧"
+                 data-mid="${m.id}" data-f="icon" aria-label="アイコン">
+          <input type="text" value="${esc(m.name)}" placeholder="点検機械名"
+                 data-mid="${m.id}" data-f="mname" aria-label="機械名">
+          <button class="miconbtn" data-move-machine="${m.id}" data-dir="-1" ${mi === 0 ? 'disabled' : ''}>↑</button>
+          <button class="miconbtn" data-move-machine="${m.id}" data-dir="1" ${mi === list.length - 1 ? 'disabled' : ''}>↓</button>
+        </div>
+        <div class="mitems">${items || '<p class="hint" style="margin:6px 2px">点検項目がありません（備考欄のみの機械として扱われます）</p>'}</div>
+        <div class="mfoot">
+          <button class="btn ghost sm" data-add-item="${m.id}">＋ 点検項目を追加</button>
+          <button class="btn ghost sm danger" data-del-machine="${m.id}">この機械を削除</button>
+        </div>
+      </div>
+    </details>`;
+  }).join('');
+
+  // 開閉状態を覚えておく
+  $$('#masterEditor details').forEach(d => d.addEventListener('toggle', () => {
+    if (d.open) openMachineId = d.dataset.machine;
+    else if (openMachineId === d.dataset.machine) openMachineId = null;
+  }));
+
+  // 機械名・アイコンの変更
+  $$('#masterEditor [data-f="mname"], #masterEditor [data-f="icon"]').forEach(inp =>
+    inp.addEventListener('change', () => {
+      const list = Store.machines();
+      const m = list.find(x => x.id === inp.dataset.mid);
+      const v = inp.value.trim();
+      if (inp.dataset.f === 'mname') {
+        if (!v) { inp.value = m.name; return toast('機械名を入力してください', true); }
+        m.name = v;
+      } else {
+        m.icon = v || '🔧';
+      }
+      Store.saveMachines(list);
+      renderMaster();
+      toast('保存しました');
+    }));
+
+  // 点検項目の変更
+  $$('#masterEditor .mrow input, #masterEditor .mrow select').forEach(el =>
+    el.addEventListener('change', () => {
+      const list = Store.machines();
+      const m = list.find(x => x.id === el.dataset.mid);
+      const it = m.items[+el.dataset.ii];
+      const f = el.dataset.f;
+      if (f === 'name') {
+        const v = el.value.trim();
+        if (!v) { el.value = it.name; return toast('点検項目名を入力してください', true); }
+        it.name = v;
+      } else if (f === 'type') {
+        it.type = el.value;
+        if (it.type !== 'num') { it.unit = ''; }
+      } else {
+        it.unit = el.value.trim();
+      }
+      Store.saveMachines(list);
+      renderMaster();
+    }));
+
+  $$('#masterEditor [data-add-item]').forEach(b => b.addEventListener('click', () => {
+    const list = Store.machines();
+    const m = list.find(x => x.id === b.dataset.addItem);
+    const wasFree = Store.isFree(m);
+    m.items = m.items || [];
+    m.items.push({ name: '新しい点検項目', type: 'judge', unit: '' });
+    Store.saveMachines(list);
+    if (wasFree) Store.addTargetToAllSites(m.id);   // 備考のみ→通常の機械になったら集計対象に加える
+    openMachineId = m.id;
+    renderMaster();
+  }));
+
+  $$('#masterEditor [data-del-item]').forEach(b => b.addEventListener('click', () => {
+    const list = Store.machines();
+    const m = list.find(x => x.id === b.dataset.delItem);
+    const it = m.items[+b.dataset.ii];
+    if (!confirm(`点検項目「${it.name}」を削除します。よろしいですか？\n（過去の点検記録は残ります）`)) return;
+    m.items.splice(+b.dataset.ii, 1);
+    Store.saveMachines(list);
+    openMachineId = m.id;
+    renderMaster();
+    toast('削除しました');
+  }));
+
+  $$('#masterEditor [data-move-item]').forEach(b => b.addEventListener('click', () => {
+    const list = Store.machines();
+    const m = list.find(x => x.id === b.dataset.moveItem);
+    move(m.items, +b.dataset.ii, +b.dataset.dir);
+    Store.saveMachines(list);
+    openMachineId = m.id;
+    renderMaster();
+  }));
+
+  $$('#masterEditor [data-move-machine]').forEach(b => b.addEventListener('click', () => {
+    const list = Store.machines();
+    const i = list.findIndex(x => x.id === b.dataset.moveMachine);
+    move(list, i, +b.dataset.dir);
+    Store.saveMachines(list);
+    openMachineId = b.dataset.moveMachine;
+    renderMaster();
+  }));
+
+  $$('#masterEditor [data-del-machine]').forEach(b => b.addEventListener('click', () => {
+    const list = Store.machines();
+    const m = list.find(x => x.id === b.dataset.delMachine);
+    if (list.length <= 1) return toast('点検機械は1つ以上必要です', true);
+    const used = Store.records().filter(r => r.machineId === m.id).length;
+    if (!confirm(`点検機械「${m.name}」を削除します。${used ? `\nこの機械の点検記録 ${used} 件は残りますが、進捗集計の対象外になります。` : ''}\nよろしいですか？`)) return;
+    Store.saveMachines(list.filter(x => x.id !== m.id));
+    const t = Store.targets();
+    Object.keys(t).forEach(sid => { t[sid] = t[sid].filter(id => id !== m.id); });
+    Store.saveTargets(t);
+    openMachineId = null;
+    renderMaster();
+    toast('削除しました');
+  }));
+}
+
+function move(arr, i, dir) {
+  const j = i + dir;
+  if (j < 0 || j >= arr.length) return;
+  const tmp = arr[i]; arr[i] = arr[j]; arr[j] = tmp;
+}
+
+function addMachine() {
+  const name = prompt('追加する点検機械の名称を入力してください', '');
+  if (name === null) return;
+  if (!name.trim()) return toast('機械名を入力してください', true);
+  const list = Store.machines();
+  const id = Store.newMachineId();
+  list.push({ id, name: name.trim(), icon: '🔧', items: [{ name: '新しい点検項目', type: 'judge', unit: '' }] });
+  Store.saveMachines(list);
+  Store.addTargetToAllSites(id);
+  openMachineId = id;
+  renderMaster();
+  toast('追加しました。点検項目を入力してください');
+}
+
+function resetMachines() {
+  if (!confirm('点検機械と点検項目を初期状態（22機種）に戻します。\n追加・変更した内容は失われます。\n（過去の点検記録は残ります）\n\nよろしいですか？')) return;
+  Store.resetMachines();
+  openMachineId = null;
+  renderMaster();
+  toast('初期状態に戻しました');
 }
 
 /* ---------------- 設定 ---------------- */
