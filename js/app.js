@@ -191,23 +191,49 @@ function onPickMachine(mid) {
 }
 
 /* ---------------- ④ 点検項目フォーム ---------------- */
+function inspectionItemsForMachine(machine, site) {
+  if (machine.id !== 'm20' || !DOSING_FLOW_BY_SITE[site]) return machine.items;
+
+  const flowTemplate = machine.items.find(it => it.name === '流量測定') ||
+    { name: '流量測定', type: 'num', unit: 'mL/min', step: '0.1' };
+  const flows = [];
+  DOSING_FLOW_BY_SITE[site].forEach(group => {
+    group.ports.forEach(portLabel => {
+      const parts = String(portLabel).trim().split(/\s+/);
+      const port = parts.shift();
+      const chemical = parts.join(' ');
+      flows.push({
+        name: `${group.machine} ${port}${chemical ? ' ' + chemical : ''} 流量測定`,
+        type: 'num', unit: flowTemplate.unit || 'mL/min', step: flowTemplate.step || '0.1',
+        dosingMachine: group.machine, dosingPort: port, chemical
+      });
+    });
+  });
+  // 漏れ確認・溶剤残量確認など、流量測定以外の既存項目はそのまま残す。
+  return flows.concat(machine.items.filter(it => it.name !== '流量測定'));
+}
+
 function openForm(mid, recId) {
   const m = Store.machineById(mid);
   if (!m) return toast('この点検機械は削除されています', true);
   if (recId) {
     editing = JSON.parse(JSON.stringify(Store.get(recId)));
   } else {
+    const site = siteName($('#inpSite').value);
+    const inspectionItems = inspectionItemsForMachine(m, site);
     editing = {
       id: Util.uuid(),
       date: $('#inpDate').value,
       siteId: $('#inpSite').value,
-      site: siteName($('#inpSite').value),
+      site,
       inspector: $('#inpInspector').value.trim(),
       machineId: mid,
       machineName: m.name,
       unit: '',
-      items: m.items.map(it => ({
+      items: inspectionItems.map(it => ({
         name: it.name, type: it.type || 'judge', unit: it.unit || '',
+        step: it.step || '', dosingMachine: it.dosingMachine || '',
+        dosingPort: it.dosingPort || '', chemical: it.chemical || '',
         judge: '', value: '', note: '', photo: '', photoUrl: ''
       })),
       note: '',
@@ -233,7 +259,11 @@ function renderItems() {
     updateFormProgress();
     return;
   }
+  let lastDosingMachine = '';
   $('#itemList').innerHTML = editing.items.map((it, i) => {
+    const groupHead = it.dosingMachine && it.dosingMachine !== lastDosingMachine
+      ? `<div class="dosing-head">⚗️ 投入機 ${esc(it.dosingMachine)}</div>` : '';
+    if (it.dosingMachine) lastDosingMachine = it.dosingMachine;
     const jbtns = ['OK', 'CAUTION', 'NG', 'NA'].map(k =>
       `<button class="jbtn ${JUDGE[k].cls}" aria-pressed="${it.judge === k}" data-j="${k}" data-i="${i}">${JUDGE[k].label}</button>`
     ).join('');
@@ -244,7 +274,7 @@ function renderItems() {
          </div>` : '';
     const photo = Util.hasPhoto(it)
       ? `<div class="thumb"><img src="${Util.photoSrc(it)}" alt="添付写真"><button data-delphoto="${i}">×</button></div>` : '';
-    return `<div class="item ${it.judge ? JUDGE[it.judge].cls : ''}" data-item="${i}">
+    return `${groupHead}<div class="item ${it.judge ? JUDGE[it.judge].cls : ''}" data-item="${i}">
       <div class="iname"><span class="idx">${i + 1}</span>${esc(it.name)}</div>
       <div class="judges">${jbtns}</div>
       ${num}
