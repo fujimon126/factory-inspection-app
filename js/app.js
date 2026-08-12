@@ -468,6 +468,15 @@ async function shareRecord(rid) {
     bad.forEach(i => lines.push(
       `・${i.name}（${JUDGE[i.judge].label}）${i.value ? ` ${i.value}${i.unit}` : ''}${i.note ? ' ' + i.note : ''}`));
   }
+  const completed = (r.items || []).filter(i => i.resolved);
+  if (completed.length) {
+    lines.push('', '■ 対応完了');
+    completed.forEach(i => {
+      lines.push(`・${i.name}（当初：${i.originalJudge ? JUDGE[i.originalJudge].label : '－'}）`);
+      if (i.resolvedCause) lines.push(`　原因：${i.resolvedCause}`);
+      if (i.resolvedNote) lines.push(`　対応内容：${i.resolvedNote}`);
+    });
+  }
   const nums = (r.items || []).filter(i => i.type === 'num' && i.value);
   if (nums.length) {
     lines.push('', '■ 測定値');
@@ -578,6 +587,7 @@ function renderTodo() {
     const doneInfo = done ? `
       <div class="doneblock">
         <div class="doneinfo">✔ 対応完了　${esc(it.resolvedAt ? Util.fmtDate(it.resolvedAt) : '')}${it.resolvedBy ? '　' + esc(it.resolvedBy) : ''}</div>
+        ${it.resolvedCause ? `<div class="t2">原因：${esc(it.resolvedCause)}</div>` : ''}
         ${it.resolvedNote ? `<div class="t2">対応内容：${esc(it.resolvedNote)}</div>` : ''}
         ${it.originalJudge ? `<div class="t2">判定を「良」に変更（当初：${JUDGE[it.originalJudge].label}）</div>` : ''}
       </div>` : '';
@@ -632,6 +642,7 @@ function openDoneDialog(rid, idx) {
     `${rec.machineName}${rec.unit ? ' ' + rec.unit : ''}　${it.name}（${JUDGE[it.judge].label}）`;
   $('#doneDate').value = Util.today();
   $('#donePerson').value = $('#inpInspector').value.trim() || Store.settings().inspector || '';
+  $('#doneCause').value = it.resolvedCause || '';
   $('#doneNote').value = it.resolvedNote || '';
   renderDonePhoto();
   $('#doneDialog').classList.remove('hidden');
@@ -671,12 +682,14 @@ function submitDone() {
   if (!doneTarget) return;
   const rec = Store.get(doneTarget.rid);
   const it = rec.items[doneTarget.idx];
+  const cause = $('#doneCause').value.trim();
   const note = $('#doneNote').value.trim();
   if (!note && !confirm('対応内容が未記入です。このまま記録しますか？')) return;
 
   it.resolved = true;
   it.resolvedAt = $('#doneDate').value || Util.today();
   it.resolvedBy = $('#donePerson').value.trim();
+  it.resolvedCause = cause;
   it.resolvedNote = note;
   if (donePhoto) { it.resolvedPhoto = donePhoto; it.resolvedPhotoUrl = ''; it.resolvedPhotoId = ''; }
 
@@ -706,6 +719,7 @@ function unresolveItem(rid, idx) {
   it.resolved = false;
   it.resolvedAt = '';
   it.resolvedBy = '';
+  it.resolvedCause = '';
   it.resolvedNote = '';
   it.resolvedPhoto = '';
   it.resolvedPhotoUrl = '';
@@ -770,7 +784,7 @@ function exportCsv() {
   const list = filteredRecords();
   if (!list.length) return toast('出力するデータがありません', true);
   const head = ['点検日', '点検場所', '点検機械', '号機', '点検者', '点検項目', '判定', '測定値', '単位',
-    '項目所見', '備考', '総合判定', '登録日時', '対応状況', '対応日', '対応者', '対応内容', '当初判定'];
+    '項目所見', '備考', '総合判定', '登録日時', '対応状況', '対応日', '対応者', '原因', '対応内容', '当初判定'];
   const rows = [head];
   list.forEach(r => {
     const base = [r.date, siteLabel(r), r.machineName, r.unit || '', r.inspector || ''];
@@ -783,7 +797,7 @@ function exportCsv() {
           it.name, it.judge ? JUDGE[it.judge].label : '未判定', it.value || '', it.unit || '',
           it.note || '', r.note || '', JUDGE[r.status].label, r.createdAt || '',
           it.resolved ? '完了' : (needs ? '未対応' : ''),
-          it.resolvedAt || '', it.resolvedBy || '', it.resolvedNote || '',
+          it.resolvedAt || '', it.resolvedBy || '', it.resolvedCause || '', it.resolvedNote || '',
           it.originalJudge ? JUDGE[it.originalJudge].label : ''
         ]));
       });

@@ -21,7 +21,7 @@ var REC_HEAD = ['ID', '点検日', '年月', '点検場所', '点検機械', '�
   '総合判定', '不良件数', '要注意件数', '未判定件数', '備考', '登録日時', '更新日時'];
 var DET_HEAD = ['ID', '点検日', '年月', '点検場所', '点検機械', '号機', '点検者',
   '項目No', '点検項目', '判定', '測定値', '単位', '所見', '写真URL', '更新日時',
-  '対応状況', '対応日', '対応者', '対応内容', '対応写真', '当初判定'];
+  '対応状況', '対応日', '対応者', '対応内容', '対応写真', '当初判定', '原因'];
 var TARGET_HEAD = ['場所ID', '点検場所', '機械ID', '点検機械', '対象', '更新日時'];
 
 var JUDGE_LABEL = { OK: '良', CAUTION: '要注意', NG: '不良', NA: '対象外', '': '未判定' };
@@ -88,7 +88,7 @@ function setRecColors_(sh) {
 /* 点検明細シート：判定(J)と対応状況(P)を色分けし、行全体も薄く色づけする */
 function setDetColors_(sh) {
   var judge = sh.getRange('J2:J10000');       // 判定
-  var row = sh.getRange('A2:U10000');         // 行全体
+  var row = sh.getRange('A2:V10000');         // 行全体
   var state = sh.getRange('P2:P10000');       // 対応状況
   sh.setConditionalFormatRules([
     rule_(judge, '不良', C_NG, true),
@@ -286,16 +286,16 @@ function refreshDashboard_(ss) {
   // 要対応・対応完了は従来どおり右側に表示する。
   dash.getRange('M7').setValue('■ 要対応（未対応の不良・要注意）').setFontWeight('bold');
   dash.getRange('M8').setFormula(
-    '=IFERROR(QUERY(' + SH_DET + '!A:U,"select B, D, E, F, I, J, M, N ' +
+    '=IFERROR(QUERY(' + SH_DET + '!A:V,"select B, D, E, F, I, J, M, N ' +
     'where (J = \'不良\' or J = \'要注意\') and (P is null or P = \'未対応\') "' +
     andYm_() +
     '"order by B desc label B \'点検日\', D \'場所\', E \'機械\', F \'号機\', I \'項目\', J \'判定\', M \'所見\', N \'写真\' format B \'yyyy-mm-dd\'",1),"要対応なし")');
   dash.getRange('V7').setValue('■ 対応完了した項目').setFontWeight('bold');
   dash.getRange('V8').setFormula(
-    '=IFERROR(QUERY(' + SH_DET + '!A:U,"select B, D, E, I, U, Q, R, S, T where P = \'完了\' "' +
+    '=IFERROR(QUERY(' + SH_DET + '!A:V,"select B, D, E, I, U, Q, R, V, S, T where P = \'完了\' "' +
     andYm_() +
     '"order by Q desc label B \'点検日\', D \'場所\', E \'機械\', I \'項目\', U \'当初判定\', ' +
-    'Q \'対応日\', R \'対応者\', S \'対応内容\', T \'対応写真\' format B \'yyyy-mm-dd\', Q \'yyyy-mm-dd\'",1),"完了分なし")');
+    'Q \'対応日\', R \'対応者\', V \'原因\', S \'対応内容\', T \'対応写真\' format B \'yyyy-mm-dd\', Q \'yyyy-mm-dd\'",1),"完了分なし")');
 
   safe_(function () {
     dash.getRange('M8:M').setNumberFormat('yyyy-mm-dd');
@@ -534,7 +534,7 @@ function saveRecord_(rec, refresh) {
         it.unit || '', it.note || '', it.photoUrl || '', now,
         state, it.resolvedAt ? toDate_(it.resolvedAt) : '', it.resolvedBy || '',
         it.resolvedNote || '', it.resolvedPhotoUrl || '',
-        it.originalJudge ? (JUDGE_LABEL[it.originalJudge] || '') : ''];
+        it.originalJudge ? (JUDGE_LABEL[it.originalJudge] || '') : '', it.resolvedCause || ''];
     });
     detSh.getRange(detSh.getLastRow() + 1, 1, detRows.length, DET_HEAD.length).setValues(detRows);
   }
@@ -613,7 +613,8 @@ function listRecords_(ym) {
       resolvedBy: d[17] || '',
       resolvedNote: d[18] || '',
       resolvedPhoto: '', resolvedPhotoUrl: d[19] || '',
-      originalJudge: labelToKey_(d[20])
+      originalJudge: labelToKey_(d[20]),
+      resolvedCause: d[21] || ''
     });
   });
 
