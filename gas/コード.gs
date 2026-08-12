@@ -15,14 +15,18 @@ var SH_REC = '点検記録';
 var SH_DET = '点検明細';
 var SH_DASH = '進捗ダッシュボード';
 var SH_TARGET = '点検対象マスタ';
+var SH_DOSING = '投入機測定';
 var PHOTO_FOLDER = '工場点検_写真';
 
 var REC_HEAD = ['ID', '点検日', '年月', '点検場所', '点検機械', '号機', '点検者',
   '総合判定', '不良件数', '要注意件数', '未判定件数', '備考', '登録日時', '更新日時'];
 var DET_HEAD = ['ID', '点検日', '年月', '点検場所', '点検機械', '号機', '点検者',
   '項目No', '点検項目', '判定', '測定値', '単位', '所見', '写真URL', '更新日時',
-  '対応状況', '対応日', '対応者', '対応内容', '対応写真', '当初判定', '原因'];
+  '対応状況', '対応日', '対応者', '対応内容', '対応写真', '当初判定', '原因',
+  '投入機番号', 'P番号', '洗剤・助剤名'];
 var TARGET_HEAD = ['場所ID', '点検場所', '機械ID', '点検機械', '対象', '更新日時'];
+var DOSING_HEAD = ['ID', '点検日', '年月', '点検場所', '投入機番号', 'P番号', '洗剤・助剤名',
+  '測定値', '判定', '所見', '点検者', '更新日時'];
 
 var JUDGE_LABEL = { OK: '良', CAUTION: '要注意', NG: '不良', NA: '対象外', '': '未判定' };
 
@@ -32,9 +36,11 @@ function 初期設定() {
   var rec = getSheet_(ss, SH_REC, REC_HEAD);
   var det = getSheet_(ss, SH_DET, DET_HEAD);
   var target = getSheet_(ss, SH_TARGET, TARGET_HEAD);
+  var dosing = getSheet_(ss, SH_DOSING, DOSING_HEAD);
   safe_(function () { rec.setFrozenRows(1); });
   safe_(function () { det.setFrozenRows(1); });
   safe_(function () { target.setFrozenRows(1); });
+  safe_(function () { dosing.setFrozenRows(1); });
 
   // ※ データシートへの表示形式（setNumberFormat）の設定は行いません。
   //    シートが「テーブル」になっていると列の型が固定されており、
@@ -44,6 +50,13 @@ function 初期設定() {
   // 判定の色分け
   safe_(function () { setRecColors_(rec); });
   safe_(function () { setDetColors_(det); });
+  safe_(function () {
+    var judge = dosing.getRange('I2:I10000');
+    dosing.setConditionalFormatRules([
+      rule_(judge, '不良', C_NG, true), rule_(judge, '要注意', C_CA, true),
+      rule_(judge, '良', C_OK, true), rule_(judge, '対象外', C_NA, false)
+    ]);
+  });
 
   // ダッシュボード（数式で自動集計）
   buildDashboard_(ss);
@@ -88,7 +101,7 @@ function setRecColors_(sh) {
 /* 点検明細シート：判定(J)と対応状況(P)を色分けし、行全体も薄く色づけする */
 function setDetColors_(sh) {
   var judge = sh.getRange('J2:J10000');       // 判定
-  var row = sh.getRange('A2:V10000');         // 行全体
+  var row = sh.getRange('A2:Y10000');         // 行全体
   var state = sh.getRange('P2:P10000');       // 対応状況
   sh.setConditionalFormatRules([
     rule_(judge, '不良', C_NG, true),
@@ -480,6 +493,7 @@ function saveRecord_(rec, refresh) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var recSh = getSheet_(ss, SH_REC, REC_HEAD);
   var detSh = getSheet_(ss, SH_DET, DET_HEAD);
+  var dosingSh = getSheet_(ss, SH_DOSING, DOSING_HEAD);
   var items = rec.items || [];
   var now = new Date();
   var ym = String(rec.date || '').slice(0, 7);
@@ -529,17 +543,44 @@ function saveRecord_(rec, refresh) {
       // 対応完了後に判定を「良」へ変えた項目も、完了の記録として残す
       var needsAction = (it.judge === 'NG' || it.judge === 'CAUTION');
       var state = it.resolved ? '完了' : (needsAction ? '未対応' : '');
+      var dosing = dosingInfo_(it);
       return [rec.id, toDate_(rec.date), ym, rec.site, rec.machineName, rec.unit || '', rec.inspector || '',
         i + 1, it.name, JUDGE_LABEL[it.judge] || '未判定', it.value === '' ? '' : it.value,
         it.unit || '', it.note || '', it.photoUrl || '', now,
         state, it.resolvedAt ? toDate_(it.resolvedAt) : '', it.resolvedBy || '',
         it.resolvedNote || '', it.resolvedPhotoUrl || '',
-        it.originalJudge ? (JUDGE_LABEL[it.originalJudge] || '') : '', it.resolvedCause || ''];
+        it.originalJudge ? (JUDGE_LABEL[it.originalJudge] || '') : '', it.resolvedCause || '',
+        dosing.machine, dosing.port, dosing.chemical];
     });
     detSh.getRange(detSh.getLastRow() + 1, 1, detRows.length, DET_HEAD.length).setValues(detRows);
   }
+
+  // 投入機の測定値は専用シートにも工場・投入機・P番号別で保存する。
+  deleteDetail_(dosingSh, rec.id);
+  var dosingRows = [];
+  items.forEach(function (it) {
+    var d = dosingInfo_(it);
+    if (!d.machine || !d.port) return;
+    dosingRows.push([rec.id, toDate_(rec.date), ym, rec.site, d.machine, d.port, d.chemical,
+      it.value === '' ? '' : it.value, JUDGE_LABEL[it.judge] || '未判定', it.note || '',
+      rec.inspector || '', now]);
+  });
+  if (dosingRows.length) {
+    dosingSh.getRange(dosingSh.getLastRow() + 1, 1, dosingRows.length, DOSING_HEAD.length).setValues(dosingRows);
+  }
   if (refresh !== false) refreshDashboard_(ss);
   return { ok: true, id: rec.id, photoUrls: photoUrls };
+}
+
+/* 投入機の工場別測定項目を列に分けて保存する。
+   古い記録は項目名（例：4番 P2 ポラー 流量測定）から復元する。 */
+function dosingInfo_(it) {
+  if (it.dosingMachine || it.dosingPort || it.chemical) {
+    return { machine: it.dosingMachine || '', port: it.dosingPort || '', chemical: it.chemical || '' };
+  }
+  var m = String(it.name || '').match(/^(\d+番)\s+(P\d+)\s*(.*?)\s*流量測定$/i);
+  return m ? { machine: m[1], port: m[2].toUpperCase(), chemical: String(m[3] || '').trim() }
+    : { machine: '', port: '', chemical: '' };
 }
 
 function findRow_(sh, id) {
@@ -614,7 +655,8 @@ function listRecords_(ym) {
       resolvedNote: d[18] || '',
       resolvedPhoto: '', resolvedPhotoUrl: d[19] || '',
       originalJudge: labelToKey_(d[20]),
-      resolvedCause: d[21] || ''
+      resolvedCause: d[21] || '',
+      dosingMachine: d[22] || '', dosingPort: d[23] || '', chemical: d[24] || ''
     });
   });
 
