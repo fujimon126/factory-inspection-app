@@ -192,10 +192,13 @@ function onPickMachine(mid) {
 
 /* ---------------- ④ 点検項目フォーム ---------------- */
 function inspectionItemsForMachine(machine, site) {
-  if (machine.id !== 'm20' || !DOSING_FLOW_BY_SITE[site]) return machine.items;
+  if (machine.id !== 'm20') return machine.items;
+  if (!DOSING_FLOW_BY_SITE[site]) {
+    return machine.items.map(it => it.name === '流量測定' ? Object.assign({}, it, { unit: '' }) : it);
+  }
 
   const flowTemplate = machine.items.find(it => it.name === '流量測定') ||
-    { name: '流量測定', type: 'num', unit: 'mL/min', step: '0.1' };
+    { name: '流量測定', type: 'num', unit: '', step: '0.1' };
   const flows = [];
   DOSING_FLOW_BY_SITE[site].forEach(group => {
     group.ports.forEach(portLabel => {
@@ -204,7 +207,7 @@ function inspectionItemsForMachine(machine, site) {
       const chemical = parts.join(' ');
       flows.push({
         name: `${group.machine} ${port}${chemical ? ' ' + chemical : ''} 流量測定`,
-        type: 'num', unit: flowTemplate.unit || 'mL/min', step: flowTemplate.step || '0.1',
+        type: 'num', unit: '', step: flowTemplate.step || '0.1',
         dosingMachine: group.machine, dosingPort: port, chemical
       });
     });
@@ -814,12 +817,13 @@ function exportCsv() {
   const list = filteredRecords();
   if (!list.length) return toast('出力するデータがありません', true);
   const head = ['点検日', '点検場所', '点検機械', '号機', '点検者', '点検項目', '判定', '測定値', '単位',
-    '項目所見', '備考', '総合判定', '登録日時', '対応状況', '対応日', '対応者', '原因', '対応内容', '当初判定'];
+    '項目所見', '備考', '総合判定', '登録日時', '対応状況', '対応日', '対応者', '原因', '対応内容', '当初判定',
+    '投入機番号', 'P番号', '洗剤・助剤名'];
   const rows = [head];
   list.forEach(r => {
     const base = [r.date, siteLabel(r), r.machineName, r.unit || '', r.inspector || ''];
     if (!r.items || !r.items.length) {
-      rows.push(base.concat(['（その他）', '', '', '', '', r.note || '', JUDGE[r.status].label, r.createdAt || '', '', '', '', '', '']));
+      rows.push(base.concat(['（その他）', '', '', '', '', r.note || '', JUDGE[r.status].label, r.createdAt || '', '', '', '', '', '', '', '', '']));
     } else {
       r.items.forEach(it => {
         const needs = it.judge === 'NG' || it.judge === 'CAUTION' || it.resolved;
@@ -828,7 +832,8 @@ function exportCsv() {
           it.note || '', r.note || '', JUDGE[r.status].label, r.createdAt || '',
           it.resolved ? '完了' : (needs ? '未対応' : ''),
           it.resolvedAt || '', it.resolvedBy || '', it.resolvedCause || '', it.resolvedNote || '',
-          it.originalJudge ? JUDGE[it.originalJudge].label : ''
+          it.originalJudge ? JUDGE[it.originalJudge].label : '',
+          it.dosingMachine || '', it.dosingPort || '', it.chemical || ''
         ]));
       });
     }

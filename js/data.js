@@ -251,7 +251,7 @@ const DEFAULT_MACHINES = [
   {
     id: 'm20', name: '投入機', icon: '⚗️',
     items: [
-      { name: '流量測定', type: 'num', unit: 'mL/min', step: '0.1' },
+      { name: '流量測定', type: 'num', unit: '', step: '0.1' },
       { name: '漏れ確認' },
       { name: '溶剤残量確認', type: 'num', unit: '%', step: '1' }
     ]
