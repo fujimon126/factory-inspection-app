@@ -216,6 +216,20 @@ function inspectionItemsForMachine(machine, site) {
   return flows.concat(machine.items.filter(it => it.name !== '流量測定'));
 }
 
+/* 投入機の測定値を自動判定する（350以上=良、300以上350未満=要注意、300未満=不良）。 */
+function isDosingMeasurement(it) {
+  return editing && editing.machineId === 'm20' &&
+    !!(it.dosingMachine || it.dosingPort || /流量測定/.test(String(it.name || '')));
+}
+function dosingJudge(value) {
+  if (value === '' || value == null || !Number.isFinite(Number(value))) return '';
+  const n = Number(value);
+  return n < 300 ? 'NG' : (n < 350 ? 'CAUTION' : 'OK');
+}
+function applyDosingJudge(it) {
+  if (isDosingMeasurement(it)) it.judge = dosingJudge(it.value);
+}
+
 function openForm(mid, recId) {
   const m = Store.machineById(mid);
   if (!m) return toast('この点検機械は削除されています', true);
@@ -267,8 +281,9 @@ function renderItems() {
     const groupHead = it.dosingMachine && it.dosingMachine !== lastDosingMachine
       ? `<div class="dosing-head">⚗️ 投入機 ${esc(it.dosingMachine)}</div>` : '';
     if (it.dosingMachine) lastDosingMachine = it.dosingMachine;
+    const autoJudge = isDosingMeasurement(it);
     const jbtns = ['OK', 'CAUTION', 'NG', 'NA'].map(k =>
-      `<button class="jbtn ${JUDGE[k].cls}" aria-pressed="${it.judge === k}" data-j="${k}" data-i="${i}">${JUDGE[k].label}</button>`
+      `<button class="jbtn ${JUDGE[k].cls}" aria-pressed="${it.judge === k}" data-j="${k}" data-i="${i}"${autoJudge ? ' disabled' : ''}>${JUDGE[k].label}</button>`
     ).join('');
     const num = it.type === 'num'
       ? `<div class="numrow">
@@ -280,6 +295,7 @@ function renderItems() {
     return `${groupHead}<div class="item ${it.judge ? JUDGE[it.judge].cls : ''}" data-item="${i}">
       <div class="iname"><span class="idx">${i + 1}</span>${esc(it.name)}</div>
       <div class="judges">${jbtns}</div>
+      ${autoJudge ? '<div class="hint">測定値から自動判定（350以上：良／300以上350未満：要注意／300未満：不良）</div>' : ''}
       ${num}
       <div class="subrow">
         <input type="text" placeholder="所見・処置（任意）" value="${esc(it.note)}" data-note="${i}">
@@ -293,7 +309,16 @@ function renderItems() {
   $$('#itemList [data-note]').forEach(inp =>
     inp.addEventListener('input', () => { editing.items[+inp.dataset.note].note = inp.value; }));
   $$('#itemList [data-num]').forEach(inp =>
-    inp.addEventListener('input', () => { editing.items[+inp.dataset.num].value = inp.value; }));
+    inp.addEventListener('input', () => {
+      const i = +inp.dataset.num;
+      const it = editing.items[i];
+      it.value = inp.value;
+      applyDosingJudge(it);
+      const row = $(`#itemList [data-item="${i}"]`);
+      row.className = 'item ' + (it.judge ? JUDGE[it.judge].cls : '');
+      row.querySelectorAll('.jbtn').forEach(b => b.setAttribute('aria-pressed', b.dataset.j === it.judge));
+      updateFormProgress();
+    }));
   $$('#itemList [data-photo]').forEach(b =>
     b.addEventListener('click', () => pickPhoto(+b.dataset.photo)));
   $$('#itemList [data-delphoto]').forEach(b =>
@@ -305,6 +330,7 @@ function esc(s) {
 }
 
 function setJudge(i, j) {
+  if (isDosingMeasurement(editing.items[i])) return;
   editing.items[i].judge = editing.items[i].judge === j ? '' : j;
   const row = $(`#itemList [data-item="${i}"]`);
   row.className = 'item ' + (editing.items[i].judge ? JUDGE[editing.items[i].judge].cls : '');
@@ -321,6 +347,7 @@ function setJudge(i, j) {
 }
 function bulkSet(kind) {
   editing.items.forEach(it => { it.judge = (kind === 'CLEAR' ? '' : kind); });
+  editing.items.forEach(applyDosingJudge);
   renderItems();
 }
 function updateFormProgress() {
@@ -358,6 +385,9 @@ async function saveRecord() {
   editing.inspector = $('#inpInspector').value.trim();
   if (editing.siteId) editing.site = siteName(editing.siteId) || editing.site; // 最新の工場名を反映
   const m = Store.machineById(editing.machineId) || { items: [] };
+
+  // 手動変更や古い編集中データがあっても、投入機の測定値を必ず基準どおり再判定する。
+  editing.items.forEach(applyDosingJudge);
 
   if (Store.isFree(m)) {
     if (!editing.note) return toast('備考欄を入力してください', true);

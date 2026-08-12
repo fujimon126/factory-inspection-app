@@ -516,6 +516,22 @@ function saveRecord_(rec, refresh) {
   var now = new Date();
   var ym = String(rec.date || '').slice(0, 7);
 
+  // 投入機測定はサーバー側でも再判定し、アプリとシートの判定を一致させる。
+  items.forEach(function (it) {
+    var dosing = dosingInfo_(it);
+    var isMeasurement = rec.machineName === '投入機' &&
+      (!!dosing.machine || !!dosing.port || /流量測定/.test(String(it.name || '')));
+    if (!isMeasurement || it.value === '' || it.value == null || isNaN(Number(it.value))) return;
+    var n = Number(it.value);
+    it.judge = n < 300 ? 'NG' : (n < 350 ? 'CAUTION' : 'OK');
+  });
+  if (rec.machineName === '投入機') {
+    var itemJudges = items.map(function (it) { return it.judge; });
+    rec.status = itemJudges.indexOf('NG') >= 0 ? 'NG' :
+      (itemJudges.indexOf('CAUTION') >= 0 ? 'CAUTION' :
+        (itemJudges.indexOf('OK') >= 0 ? 'OK' : 'NA'));
+  }
+
   // 写真をドライブへ保存し、URLに置換
   var photoUrls = [];
   items.forEach(function (it, idx) {
