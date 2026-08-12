@@ -621,7 +621,6 @@ function openDoneDialog(rid, idx) {
   $('#doneDate').value = Util.today();
   $('#donePerson').value = $('#inpInspector').value.trim() || Store.settings().inspector || '';
   $('#doneNote').value = it.resolvedNote || '';
-  $('#doneToOk').checked = false;
   renderDonePhoto();
   $('#doneDialog').classList.remove('hidden');
 }
@@ -669,11 +668,11 @@ function submitDone() {
   it.resolvedNote = note;
   if (donePhoto) { it.resolvedPhoto = donePhoto; it.resolvedPhotoUrl = ''; it.resolvedPhotoId = ''; }
 
-  if ($('#doneToOk').checked) {
-    if (!it.originalJudge) it.originalJudge = it.judge;   // 当初の判定を残す
-    it.judge = 'OK';
-    rec.status = Util.statusOf(rec);                      // 総合判定を再計算
-  }
+  // 対応完了時は自動的に「良」へ変更する。
+  // 未対応へ戻した際に復元できるよう、変更前の判定を必ず保存する。
+  if (!it.originalJudge) it.originalJudge = it.judge;
+  it.judge = 'OK';
+  rec.status = Util.statusOf(rec);                        // 総合判定を再計算
 
   rec.synced = false;
   Store.upsert(rec);
