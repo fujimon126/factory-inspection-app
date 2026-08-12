@@ -32,6 +32,7 @@ const Store = {
   },
   saveSites(list) {
     localStorage.setItem(LS_SITES, JSON.stringify(list));
+    window.dispatchEvent(new Event('masterchange'));
   },
   siteName(id) {
     const s = this.sites().find(x => x.id === id);
@@ -52,9 +53,11 @@ const Store = {
   },
   saveMachines(list) {
     localStorage.setItem(LS_MACHINES, JSON.stringify(list));
+    window.dispatchEvent(new Event('masterchange'));
   },
   resetMachines() {
     localStorage.removeItem(LS_MACHINES);
+    window.dispatchEvent(new Event('masterchange'));
   },
   machineById(id) {
     return this.machines().find(m => m.id === id) || null;
@@ -93,6 +96,15 @@ const Store = {
   },
   saveTargets(t) {
     localStorage.setItem(LS_TARGETS, JSON.stringify(t));
+    window.dispatchEvent(new Event('masterchange'));
+  },
+
+  masterPayload() {
+    return {
+      sites: this.sites().map(s => ({ id: s.id, name: s.name })),
+      machines: this.countedMachines().map(m => ({ id: m.id, name: m.name })),
+      targets: this.targets()
+    };
   },
 
   /* ---------- 点検記録 ---------- */
@@ -129,15 +141,28 @@ const Store = {
     const s = this.settings();
     if (!s.gasUrl) throw new Error('スプレッドシートの連携URLが未設定です（設定タブ）');
     const pending = this.unsynced();
-    if (!pending.length) return { sent: 0 };
+
+    // 進捗率の分母となる「工場×機械」の点検対象設定を先に同期する。
+    const masterRes = await fetch(s.gasUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action: 'syncMaster', master: this.masterPayload() })
+    });
+    const masterJson = await masterRes.json();
+    if (!masterJson.ok) throw new Error(masterJson.error || '点検対象設定の同期に失敗しました');
 
     let sent = 0;
-    for (const rec of pending) {
+    for (let pendingIndex = 0; pendingIndex < pending.length; pendingIndex++) {
+      const rec = pending[pendingIndex];
       const res = await fetch(s.gasUrl, {
         method: 'POST',
         // text/plain にすると CORS プリフライトを回避できる（GAS 側で JSON.parse）
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({ action: 'save', record: rec })
+        body: JSON.stringify({
+          action: 'save',
+          record: rec,
+          refresh: pendingIndex === pending.length - 1
+        })
       });
       const json = await res.json();
       if (!json.ok) throw new Error(json.error || '保存に失敗しました');
@@ -162,7 +187,7 @@ const Store = {
       }
       sent++;
     }
-    return { sent };
+    return { sent, targets: masterJson.targets || 0 };
   },
 
   async pull(ym) {

@@ -14,6 +14,7 @@
 var SH_REC = '点検記録';
 var SH_DET = '点検明細';
 var SH_DASH = '進捗ダッシュボード';
+var SH_TARGET = '点検対象マスタ';
 var PHOTO_FOLDER = '工場点検_写真';
 
 var REC_HEAD = ['ID', '点検日', '年月', '点検場所', '点検機械', '号機', '点検者',
@@ -21,6 +22,7 @@ var REC_HEAD = ['ID', '点検日', '年月', '点検場所', '点検機械', '�
 var DET_HEAD = ['ID', '点検日', '年月', '点検場所', '点検機械', '号機', '点検者',
   '項目No', '点検項目', '判定', '測定値', '単位', '所見', '写真URL', '更新日時',
   '対応状況', '対応日', '対応者', '対応内容', '対応写真', '当初判定'];
+var TARGET_HEAD = ['場所ID', '点検場所', '機械ID', '点検機械', '対象', '更新日時'];
 
 var JUDGE_LABEL = { OK: '良', CAUTION: '要注意', NG: '不良', NA: '対象外', '': '未判定' };
 
@@ -29,8 +31,10 @@ function 初期設定() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var rec = getSheet_(ss, SH_REC, REC_HEAD);
   var det = getSheet_(ss, SH_DET, DET_HEAD);
+  var target = getSheet_(ss, SH_TARGET, TARGET_HEAD);
   safe_(function () { rec.setFrozenRows(1); });
   safe_(function () { det.setFrozenRows(1); });
+  safe_(function () { target.setFrozenRows(1); });
 
   // ※ データシートへの表示形式（setNumberFormat）の設定は行いません。
   //    シートが「テーブル」になっていると列の型が固定されており、
@@ -47,6 +51,7 @@ function 初期設定() {
   // 既存データを最新の形式に揃え直す
   修復_日付と年月();
   safe_(修復_対応状況);
+  refreshDashboard_(ss);
 
   return 'セットアップ完了';
 }
@@ -142,49 +147,183 @@ function buildDashboard_(ss) {
     .setNote('集計したい年月を yyyy-MM 形式（例 2026-08）で入力してください。\n空欄にすると全期間を集計します。');
   dash.getRange('C2').setFormula('=IF($B$2="","（空欄のため全期間を集計中）","集計対象："&' + YM_ + '&"　※空欄にすると全期間")')
     .setFontColor('#6b7b8c');
+  safe_(function () { dash.setHiddenGridlines(true); });
+  refreshDashboard_(ss);
+}
 
-  /* 表はそれぞれ別の列に置く。
-     QUERY はデータ件数に応じて下へ伸びるため、同じ列に並べると
-     下の表とぶつかって「#REF! 結果が重複しています」となり何も表示されなくなる。 */
+/* B2の年月が変更されたら、その場で進捗を再集計する */
+function onEdit(e) {
+  try {
+    if (!e || !e.range) return;
+    if (e.range.getSheet().getName() === SH_DASH && e.range.getA1Notation() === 'B2') {
+      refreshDashboard_(e.source || SpreadsheetApp.getActiveSpreadsheet());
+    }
+  } catch (err) {
+    Logger.log('ダッシュボード再集計エラー: ' + err);
+  }
+}
 
-  dash.getRange('A4').setValue('■ 工場別 点検機械項目').setFontWeight('bold');
-  dash.getRange('A5').setFormula(q_(SH_REC + '!A:N',
-    'select D, count(A) ', 'group by D label D \'点検場所\', count(A) \'点検機械項目\'', 'データなし'));
+/* ============ 工場別・機械別の進捗集計 ============ */
+function refreshDashboard_(ss) {
+  ss = ss || SpreadsheetApp.getActiveSpreadsheet();
+  var dash = ss.getSheetByName(SH_DASH);
+  if (!dash) return;
 
-  dash.getRange('D4').setValue('■ 判定内訳').setFontWeight('bold');
-  dash.getRange('D5').setFormula(q_(SH_REC + '!A:N',
-    'select H, count(A) ', 'group by H label H \'総合判定\', count(A) \'件数\'', 'データなし'));
+  // B2より下の表示部分だけを作り直す。入力セルB2は保持する。
+  safe_(function () { dash.getRange('A4:AE500').clearContent().clearFormat(); });
 
-  dash.getRange('G4').setValue('■ 機械別 点検回数').setFontWeight('bold');
-  dash.getRange('G5').setFormula(q_(SH_REC + '!A:N',
-    'select E, count(A) ', 'group by E order by count(A) desc label E \'点検機械\', count(A) \'点検回数\'', 'データなし'));
+  var targetSh = getSheet_(ss, SH_TARGET, TARGET_HEAD);
+  var recSh = getSheet_(ss, SH_REC, REC_HEAD);
+  var targetRows = targetSh.getLastRow() > 1
+    ? targetSh.getRange(2, 1, targetSh.getLastRow() - 1, TARGET_HEAD.length).getValues() : [];
+  targetRows = targetRows.filter(function (r) {
+    return r[1] && r[3] && (r[4] === true || String(r[4]).toUpperCase() === 'TRUE' || r[4] === 1);
+  });
 
-  dash.getRange('J4').setValue('■ 要対応（未対応の不良・要注意）').setFontWeight('bold');
-  // 「P is null」も条件に入れる … 対応状況が空欄の古いデータも表示されるようにするため
-  // format B 'yyyy-mm-dd' … これが無いと点検日が日付の内部値（数字）で表示される
-  dash.getRange('J5').setFormula(
+  var recRows = recSh.getLastRow() > 1
+    ? recSh.getRange(2, 1, recSh.getLastRow() - 1, REC_HEAD.length).getValues() : [];
+  var b2 = dash.getRange('B2').getValue();
+  var ym = b2 === '' ? '' : ymOf_(b2);
+  recRows = recRows.filter(function (r) { return !ym || ymOf_(r[1]) === ym; });
+
+  // マスタ未同期の場合でも記録済みデータから最低限の表を作る。
+  var inferred = false;
+  if (!targetRows.length && recRows.length) {
+    inferred = true;
+    var seenFallback = {};
+    recRows.forEach(function (r) {
+      var k = String(r[3]) + '\u0001' + String(r[4]);
+      if (!seenFallback[k]) {
+        seenFallback[k] = true;
+        targetRows.push(['', r[3], '', r[4], true, '']);
+      }
+    });
+  }
+
+  var target = {}, done = {}, sites = [], machines = [], seenSite = {}, seenMachine = {};
+  targetRows.forEach(function (r) {
+    var site = String(r[1]), machine = String(r[3]);
+    var key = site + '\u0001' + machine;
+    target[key] = true;
+    if (!seenSite[site]) { seenSite[site] = true; sites.push(site); }
+    if (!seenMachine[machine]) { seenMachine[machine] = true; machines.push(machine); }
+  });
+  recRows.forEach(function (r) {
+    var site = String(r[3] || ''), machine = String(r[4] || '');
+    if (site && machine) done[site + '\u0001' + machine] = true;
+  });
+
+  var targetTotal = Object.keys(target).length;
+  var doneTotal = Object.keys(target).filter(function (k) { return done[k]; }).length;
+  var pendingTotal = Math.max(0, targetTotal - doneTotal);
+  var totalRate = targetTotal ? doneTotal / targetTotal : 0;
+
+  // KPIカード
+  var kpis = [
+    ['対象項目', targetTotal], ['実施項目', doneTotal],
+    ['未実施項目', pendingTotal], ['全体進捗率', totalRate]
+  ];
+  var kpiCols = [1, 3, 5, 7];
+  kpis.forEach(function (k, i) {
+    dash.getRange(4, kpiCols[i]).setValue(k[0]).setFontWeight('bold').setFontColor('#5f6b76');
+    dash.getRange(5, kpiCols[i]).setValue(k[1]).setFontSize(18).setFontWeight('bold')
+      .setBackground(i === 2 && pendingTotal ? '#fce8e6' : '#e8f5ea');
+  });
+  dash.getRange('G5').setNumberFormat('0%');
+  dash.getRange('A6').setValue(inferred
+    ? '※ 点検対象マスタが未同期です。現在は記録済みデータだけを対象として仮集計しています。アプリの「今すぐ同期」を実行してください。'
+    : '※ 月内に同じ工場・機械を複数回点検しても、進捗では1項目として集計します。')
+    .setFontColor(inferred ? '#b3261e' : '#6b7b8c');
+
+  // 工場別進捗
+  var siteStats = sites.map(function (site) {
+    var keys = Object.keys(target).filter(function (k) { return k.indexOf(site + '\u0001') === 0; });
+    var d = keys.filter(function (k) { return done[k]; }).length;
+    return [site, keys.length, d, keys.length - d, keys.length ? d / keys.length : 0];
+  });
+  writeProgressTable_(dash, 8, 1, '■ 工場別 点検進捗',
+    ['点検場所', '対象項目', '実施項目', '未実施', '進捗率'], siteStats);
+
+  // 機械別進捗（各工場で対象になっている機械を1項目として数える）
+  var machineStats = machines.map(function (machine) {
+    var keys = Object.keys(target).filter(function (k) { return k.slice(k.indexOf('\u0001') + 1) === machine; });
+    var d = keys.filter(function (k) { return done[k]; }).length;
+    return [machine, keys.length, d, keys.length - d, keys.length ? d / keys.length : 0];
+  }).sort(function (a, b) { return a[4] - b[4] || String(a[0]).localeCompare(String(b[0]), 'ja'); });
+  writeProgressTable_(dash, 8, 7, '■ 機械別 点検進捗',
+    ['点検機械', '対象工場', '実施工場', '未実施', '進捗率'], machineStats);
+
+  // 工場×機械マトリクス
+  var matrixRow = Math.max(16, 11 + machineStats.length);
+  dash.getRange(matrixRow, 1).setValue('■ 工場 × 機械 点検進捗（済＝実施、未＝未実施、－＝対象外）')
+    .setFontWeight('bold').setFontColor('#0f4c81');
+  var matrix = [['点検機械'].concat(sites)];
+  machines.forEach(function (machine) {
+    var row = [machine];
+    sites.forEach(function (site) {
+      var key = site + '\u0001' + machine;
+      row.push(!target[key] ? '－' : (done[key] ? '済' : '未'));
+    });
+    matrix.push(row);
+  });
+  if (matrix.length > 1) {
+    var mr = dash.getRange(matrixRow + 1, 1, matrix.length, matrix[0].length);
+    mr.setValues(matrix);
+    dash.getRange(matrixRow + 1, 1, 1, matrix[0].length)
+      .setBackground('#0f4c81').setFontColor('#ffffff').setFontWeight('bold');
+    dash.getRange(matrixRow + 2, 2, matrix.length - 1, sites.length).setHorizontalAlignment('center');
+    for (var rr = 0; rr < machines.length; rr++) {
+      for (var cc = 0; cc < sites.length; cc++) {
+        var cell = dash.getRange(matrixRow + 2 + rr, 2 + cc);
+        var value = matrix[rr + 1][cc + 1];
+        if (value === '済') cell.setBackground('#0f9d58').setFontColor('#ffffff').setFontWeight('bold');
+        else if (value === '未') cell.setBackground('#fce8e6').setFontColor('#d93025').setFontWeight('bold');
+        else cell.setBackground('#f1f3f4').setFontColor('#9aa0a6');
+      }
+    }
+  }
+
+  // 要対応・対応完了は従来どおり右側に表示する。
+  dash.getRange('M7').setValue('■ 要対応（未対応の不良・要注意）').setFontWeight('bold');
+  dash.getRange('M8').setFormula(
     '=IFERROR(QUERY(' + SH_DET + '!A:U,"select B, D, E, F, I, J, M, N ' +
     'where (J = \'不良\' or J = \'要注意\') and (P is null or P = \'未対応\') "' +
     andYm_() +
     '"order by B desc label B \'点検日\', D \'場所\', E \'機械\', F \'号機\', I \'項目\', J \'判定\', M \'所見\', N \'写真\' format B \'yyyy-mm-dd\'",1),"要対応なし")');
-
-  dash.getRange('S4').setValue('■ 対応完了した項目').setFontWeight('bold');
-  dash.getRange('S5').setFormula(
+  dash.getRange('V7').setValue('■ 対応完了した項目').setFontWeight('bold');
+  dash.getRange('V8').setFormula(
     '=IFERROR(QUERY(' + SH_DET + '!A:U,"select B, D, E, I, U, Q, R, S, T where P = \'完了\' "' +
     andYm_() +
     '"order by Q desc label B \'点検日\', D \'場所\', E \'機械\', I \'項目\', U \'当初判定\', ' +
     'Q \'対応日\', R \'対応者\', S \'対応内容\', T \'対応写真\' format B \'yyyy-mm-dd\', Q \'yyyy-mm-dd\'",1),"完了分なし")');
 
   safe_(function () {
-    dash.getRange('J5:J').setNumberFormat('yyyy-mm-dd');   // 要対応の点検日
-    dash.getRange('S5:S').setNumberFormat('yyyy-mm-dd');   // 完了分の点検日
-    dash.getRange('X5:X').setNumberFormat('yyyy-mm-dd');   // 完了分の対応日
+    dash.getRange('M8:M').setNumberFormat('yyyy-mm-dd');
+    dash.getRange('V8:V').setNumberFormat('yyyy-mm-dd');
+    dash.getRange('AA8:AA').setNumberFormat('yyyy-mm-dd');
+    dash.setFrozenRows(2);
+    dash.setColumnWidth(1, 190);
+    dash.setColumnWidth(7, 190);
+    for (var c = 2; c <= Math.max(6, sites.length + 1); c++) dash.setColumnWidth(c, 90);
+    dash.autoResizeColumns(13, 19);
   });
+}
 
-  safe_(function () {
-    dash.setColumnWidth(1, 160);
-    dash.setColumnWidth(3, 320);
-    dash.autoResizeColumns(4, 12);
+function writeProgressTable_(sheet, row, col, title, headers, rows) {
+  sheet.getRange(row - 1, col).setValue(title).setFontWeight('bold').setFontColor('#0f4c81');
+  sheet.getRange(row, col, 1, headers.length).setValues([headers])
+    .setBackground('#0f4c81').setFontColor('#ffffff').setFontWeight('bold');
+  if (!rows.length) {
+    sheet.getRange(row + 1, col).setValue('データなし');
+    return;
+  }
+  sheet.getRange(row + 1, col, rows.length, headers.length).setValues(rows);
+  sheet.getRange(row + 1, col + 4, rows.length, 1).setNumberFormat('0%');
+  rows.forEach(function (r, i) {
+    var rate = r[4];
+    var bg = rate >= 1 ? '#e8f5ea' : (rate > 0 ? '#fff3d6' : '#fce8e6');
+    var fg = rate >= 1 ? '#0f9d58' : (rate > 0 ? '#8a5a00' : '#d93025');
+    sheet.getRange(row + 1 + i, col + 4).setBackground(bg).setFontColor(fg).setFontWeight('bold');
   });
 }
 
@@ -298,8 +437,9 @@ function doPost(e) {
   try {
     lock.waitLock(30000);
     var body = JSON.parse(e.postData.contents);
-    if (body.action !== 'save') return json_({ ok: false, error: '不明なアクションです' });
-    return json_(saveRecord_(body.record));
+    if (body.action === 'syncMaster') return json_(syncTargetMaster_(body.master));
+    if (body.action === 'save') return json_(saveRecord_(body.record, body.refresh !== false));
+    return json_({ ok: false, error: '不明なアクションです' });
   } catch (err) {
     return json_({ ok: false, error: String(err) });
   } finally {
@@ -307,7 +447,36 @@ function doPost(e) {
   }
 }
 
-function saveRecord_(rec) {
+/* アプリ内の点検対象設定をスプレッドシートへ同期する。
+   最後に同期した端末の設定を正として、対象マスタを入れ替える。 */
+function syncTargetMaster_(master) {
+  master = master || {};
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sh = getSheet_(ss, SH_TARGET, TARGET_HEAD);
+  var sites = master.sites || [];
+  var machines = master.machines || [];
+  var targets = master.targets || {};
+  var now = new Date();
+  var rows = [];
+  var machineById = {};
+  machines.forEach(function (m) { machineById[m.id] = m; });
+  sites.forEach(function (s) {
+    (targets[s.id] || []).forEach(function (mid) {
+      var m = machineById[mid];
+      if (m && m.name) rows.push([s.id, s.name, mid, m.name, true, now]);
+    });
+  });
+  if (sh.getLastRow() > 1) sh.getRange(2, 1, sh.getLastRow() - 1, TARGET_HEAD.length).clearContent();
+  if (rows.length) sh.getRange(2, 1, rows.length, TARGET_HEAD.length).setValues(rows);
+  safe_(function () {
+    sh.getRange('A1:F1').setBackground('#0f4c81').setFontColor('#ffffff').setFontWeight('bold');
+    sh.autoResizeColumns(1, TARGET_HEAD.length);
+  });
+  refreshDashboard_(ss);
+  return { ok: true, targets: rows.length };
+}
+
+function saveRecord_(rec, refresh) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var recSh = getSheet_(ss, SH_REC, REC_HEAD);
   var detSh = getSheet_(ss, SH_DET, DET_HEAD);
@@ -369,6 +538,7 @@ function saveRecord_(rec) {
     });
     detSh.getRange(detSh.getLastRow() + 1, 1, detRows.length, DET_HEAD.length).setValues(detRows);
   }
+  if (refresh !== false) refreshDashboard_(ss);
   return { ok: true, id: rec.id, photoUrls: photoUrls };
 }
 

@@ -7,6 +7,7 @@ const $$ = sel => Array.from(document.querySelectorAll(sel));
 let currentView = 'inspect';
 let editing = null;      // 編集中の点検記録
 let toastTimer = null;
+let masterSyncTimer = null;
 
 /* ---------------- 共通UI ---------------- */
 function toast(msg, isErr) {
@@ -108,6 +109,7 @@ function init() {
 
   window.addEventListener('online', () => { updateNet(); if (Store.settings().autoSync) syncNow(false); });
   window.addEventListener('offline', updateNet);
+  window.addEventListener('masterchange', scheduleMasterSync);
   updateNet();
   renderMachineGrid();
   updatePendingBadge();
@@ -116,6 +118,15 @@ function init() {
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js').catch(() => { /* 未対応環境は無視 */ });
   }
+}
+
+/* 工場・機械・点検対象の編集が続いても、最後の変更から少し待って1回だけ同期する */
+function scheduleMasterSync() {
+  clearTimeout(masterSyncTimer);
+  masterSyncTimer = setTimeout(() => {
+    const st = Store.settings();
+    if (st.autoSync && st.gasUrl && navigator.onLine) syncNow(false);
+  }, 800);
 }
 
 function updateNet() {
@@ -354,11 +365,12 @@ async function syncNow(manual) {
   }
   if (!navigator.onLine) { if (manual) toast('オフラインです。通信可能になったら送信されます', true); return; }
   const n = Store.unsynced().length;
-  if (!n) { if (manual) toast('未送信データはありません'); return; }
-  if (manual) busy(true, `送信中… (${n}件)`);
+  if (manual) busy(true, n ? `送信中… (${n}件)` : '点検対象設定を同期中…');
   try {
     const r = await Store.push();
-    toast(`スプレッドシートへ ${r.sent} 件送信しました`);
+    toast(r.sent
+      ? `点検対象設定と点検記録 ${r.sent} 件を送信しました`
+      : `点検対象設定 ${r.targets} 項目を同期しました`);
   } catch (e) {
     toast('送信に失敗：' + e.message, true);
   } finally {
