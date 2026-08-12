@@ -187,6 +187,7 @@ function refreshDashboard_(ss) {
 
   var targetSh = getSheet_(ss, SH_TARGET, TARGET_HEAD);
   var recSh = getSheet_(ss, SH_REC, REC_HEAD);
+  var detSh = getSheet_(ss, SH_DET, DET_HEAD);
   var targetRows = targetSh.getLastRow() > 1
     ? targetSh.getRange(2, 1, targetSh.getLastRow() - 1, TARGET_HEAD.length).getValues() : [];
   targetRows = targetRows.filter(function (r) {
@@ -198,6 +199,8 @@ function refreshDashboard_(ss) {
   var b2 = dash.getRange('B2').getValue();
   var ym = b2 === '' ? '' : ymOf_(b2);
   recRows = recRows.filter(function (r) { return !ym || ymOf_(r[1]) === ym; });
+  var detRows = detSh.getLastRow() > 1
+    ? detSh.getRange(2, 1, detSh.getLastRow() - 1, DET_HEAD.length).getValues() : [];
 
   // マスタ未同期の場合でも記録済みデータから最低限の表を作る。
   var inferred = false;
@@ -221,9 +224,24 @@ function refreshDashboard_(ss) {
     if (!seenSite[site]) { seenSite[site] = true; sites.push(site); }
     if (!seenMachine[machine]) { seenMachine[machine] = true; machines.push(machine); }
   });
+  // 対象月の記録IDを工場×機械へ対応付け、明細の全判定を確認する。
+  // 「良」以外（不良・要注意・対象外・未判定）が1つでもあれば未完了。
+  var recordKeyById = {}, completion = {};
   recRows.forEach(function (r) {
     var site = String(r[3] || ''), machine = String(r[4] || '');
-    if (site && machine) done[site + '\u0001' + machine] = true;
+    if (!site || !machine) return;
+    var key = site + '\u0001' + machine;
+    recordKeyById[String(r[0])] = key;
+    completion[key] = completion[key] || { hasItems: false, allGood: true };
+  });
+  detRows.forEach(function (d) {
+    var key = recordKeyById[String(d[0])];
+    if (!key) return;
+    completion[key].hasItems = true;
+    if (String(d[9]) !== '良') completion[key].allGood = false;
+  });
+  Object.keys(completion).forEach(function (key) {
+    if (completion[key].hasItems && completion[key].allGood) done[key] = true;
   });
 
   var targetTotal = Object.keys(target).length;
@@ -233,8 +251,8 @@ function refreshDashboard_(ss) {
 
   // KPIカード
   var kpis = [
-    ['対象項目', targetTotal], ['実施項目', doneTotal],
-    ['未実施項目', pendingTotal], ['全体進捗率', totalRate]
+    ['対象項目', targetTotal], ['完了項目', doneTotal],
+    ['未完了項目', pendingTotal], ['全体進捗率', totalRate]
   ];
   var kpiCols = [1, 3, 5, 7];
   kpis.forEach(function (k, i) {
@@ -245,7 +263,7 @@ function refreshDashboard_(ss) {
   dash.getRange('G5').setNumberFormat('0%');
   dash.getRange('A6').setValue(inferred
     ? '※ 点検対象マスタが未同期です。現在は記録済みデータだけを対象として仮集計しています。アプリの「今すぐ同期」を実行してください。'
-    : '※ 月内に同じ工場・機械を複数回点検しても、進捗では1項目として集計します。')
+    : '※ 全点検項目が「良」の機械だけを完了として集計します。対象外・未判定を含む場合は未完了です。')
     .setFontColor(inferred ? '#b3261e' : '#6b7b8c');
 
   // 工場別進捗
@@ -255,7 +273,7 @@ function refreshDashboard_(ss) {
     return [site, keys.length, d, keys.length - d, keys.length ? d / keys.length : 0];
   });
   writeProgressTable_(dash, 8, 1, '■ 工場別 点検進捗',
-    ['点検場所', '対象項目', '実施項目', '未実施', '進捗率'], siteStats);
+    ['点検場所', '対象項目', '完了項目', '未完了', '進捗率'], siteStats);
 
   // 機械別進捗（各工場で対象になっている機械を1項目として数える）
   var machineStats = machines.map(function (machine) {
@@ -264,11 +282,11 @@ function refreshDashboard_(ss) {
     return [machine, keys.length, d, keys.length - d, keys.length ? d / keys.length : 0];
   }).sort(function (a, b) { return a[4] - b[4] || String(a[0]).localeCompare(String(b[0]), 'ja'); });
   writeProgressTable_(dash, 8, 7, '■ 機械別 点検進捗',
-    ['点検機械', '対象工場', '実施工場', '未実施', '進捗率'], machineStats);
+    ['点検機械', '対象工場', '完了工場', '未完了', '進捗率'], machineStats);
 
   // 工場×機械マトリクス
   var matrixRow = Math.max(16, 11 + machineStats.length);
-  dash.getRange(matrixRow, 1).setValue('■ 工場 × 機械 点検進捗（済＝実施、未＝未実施、－＝対象外）')
+  dash.getRange(matrixRow, 1).setValue('■ 工場 × 機械 点検進捗（済＝全項目良、未＝良以外あり／未点検、－＝対象外）')
     .setFontWeight('bold').setFontColor('#0f4c81');
   var matrix = [['点検機械'].concat(sites)];
   machines.forEach(function (machine) {

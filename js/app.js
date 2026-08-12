@@ -857,9 +857,19 @@ function renderDash() {
   const targets = Store.targets();
   const sites = Store.sites();
 
-  // 統計（点検済みの判定は場所ID、シート取込データは工場名で照合）
+  // 進捗は、その工場・機械に属する全記録の全点検項目が「良」の場合だけ完了とする。
+  // 不良・要注意・対象外・未判定が1つでもあれば「未」のまま。
   const totalTargets = sites.reduce((n, s) => n + (targets[s.id] || []).length, 0);
-  const doneKeys = new Set(recs.map(r => (r.siteId || Store.siteIdByName(r.site)) + '|' + r.machineId));
+  const recsByKey = {};
+  recs.forEach(r => {
+    const key = (r.siteId || Store.siteIdByName(r.site)) + '|' + r.machineId;
+    (recsByKey[key] = recsByKey[key] || []).push(r);
+  });
+  const doneKeys = new Set(Object.keys(recsByKey).filter(key => {
+    const group = recsByKey[key];
+    return group.length > 0 && group.every(r =>
+      Array.isArray(r.items) && r.items.length > 0 && r.items.every(i => i.judge === 'OK'));
+  }));
   const doneTargets = sites.reduce((n, s) =>
     n + (targets[s.id] || []).filter(mid => doneKeys.has(s.id + '|' + mid)).length, 0);
   const pct = totalTargets ? Math.round(doneTargets / totalTargets * 100) : 0;
@@ -869,7 +879,7 @@ function renderDash() {
 
   $('#dashStats').innerHTML = `
     <div class="stat-card"><div class="n">${pct}<small style="font-size:14px">%</small></div><div class="l">点検実施率</div></div>
-    <div class="stat-card okc"><div class="n">${doneTargets}/${totalTargets}</div><div class="l">実施項目 / 対象項目</div></div>
+    <div class="stat-card okc"><div class="n">${doneTargets}/${totalTargets}</div><div class="l">完了項目 / 対象項目</div></div>
     <div class="stat-card ngc"><div class="n">${ngItems.length}</div><div class="l">未対応の不良</div></div>
     <div class="stat-card cac"><div class="n">${caItems.length}</div><div class="l">未対応の要注意</div></div>`;
 
@@ -891,10 +901,12 @@ function renderDash() {
     const tds = sites.map(s => {
       const isTarget = (targets[s.id] || []).includes(m.id);
       if (!isTarget) return '<td class="off">－</td>';
-      const rs = recs.filter(r => sameSite(r, s.id) && r.machineId === m.id);
+      const key = s.id + '|' + m.id;
+      const rs = recsByKey[key] || [];
       if (!rs.length) return '<td class="none">・</td>';
+      if (doneKeys.has(key)) return '<td class="ok">〇</td>';
       const st = worstStatus(rs);
-      const mark = { OK: '〇', CAUTION: '△', NG: '×', NA: '－' }[st];
+      const mark = st === 'NG' ? '×' : (st === 'CAUTION' ? '△' : '未');
       return `<td class="${JUDGE[st].cls}">${mark}</td>`;
     }).join('');
     return `<tr><th>${m.name}</th>${tds}</tr>`;
