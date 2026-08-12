@@ -15,6 +15,33 @@ const DEFAULT_SITES = [
   { id: 's5', name: 'E工場' }
 ];
 
+/* 投入機の工場別流量測定マスター
+ * 共有された「投入機流量測定／投入機管理表」の構成を反映。
+ * machine＝「〇番」、port＝「P〇（洗剤・助剤）」を表す。
+ * 過去の測定値は使用せず、入力欄の構成だけを保持する。
+ */
+const DOSING_FLOW_BY_SITE = {
+  'A工場': [
+    { machine: '1番', ports: ['P1', 'P2', 'P3'] },
+    { machine: '2番', ports: ['P1', 'P2', 'P3'] },
+    { machine: '3番', ports: ['P1', 'P2', 'P3'] },
+    { machine: '4番', ports: ['P1 洗剤A', 'P2 助剤B', 'P3 助剤C', 'P4 助剤D'] }
+  ],
+  'B工場': [
+    { machine: '1番', ports: ['P1', 'P2', 'P3'] },
+    { machine: '2番', ports: ['P1', 'P2', 'P3'] },
+    { machine: '3番', ports: ['P1 洗剤A', 'P2 助剤B', 'P3 助剤C', 'P4 助剤D'] }
+  ],
+  'C工場': [
+    { machine: '1番', ports: ['P1', 'P2', 'P3'] },
+    { machine: '2番', ports: ['P1', 'P2', 'P3'] },
+    { machine: '3番', ports: ['P1 洗剤A', 'P2 助剤B', 'P3 助剤C', 'P4 助剤D'] }
+  ],
+  'D工場': [
+    { machine: '1番', ports: ['P1 洗剤A', 'P2 助剤B', 'P3 助剤C', 'P4 助剤D'] }
+  ]
+};
+
 const JUDGE = {
   OK: { key: 'OK', label: '良', cls: 'ok' },
   CAUTION: { key: 'CAUTION', label: '要注意', cls: 'caution' },
@@ -242,4 +269,3 @@ const DEFAULT_MACHINES = [
     items: []
   }
 ];
-
