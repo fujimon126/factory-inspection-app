@@ -70,6 +70,19 @@
         <label for="inpNote">備考欄</label>
         <textarea id="inpNote" rows="4" placeholder="処置内容・部品交換・次回確認事項など"></textarea>
       </div>
+      <div class="field">
+        <label>備考の判定（任意）</label>
+        <div class="judges judges3" id="noteJudges">
+          <button class="jbtn ok" data-nj="OK" aria-pressed="false">良</button>
+          <button class="jbtn caution" data-nj="CAUTION" aria-pressed="false">要注意</button>
+          <button class="jbtn ng" data-nj="NG" aria-pressed="false">不良</button>
+        </div>
+        <p class="hint" style="margin:6px 2px 0">要注意・不良を選ぶと要対応リストに追加されます。もう一度タップで選択解除。</p>
+      </div>
+      <div class="subrow">
+        <button id="notePhotoBtn" class="btn ghost sm" style="flex:1">📷 備考に写真を添付</button>
+      </div>
+      <div id="notePhotoThumb"></div>
     </div>
 
     <div class="actionbar">
