@@ -3,6 +3,24 @@
    ========================================================= */
 const $ = sel => document.querySelector(sel);
 const $$ = sel => Array.from(document.querySelectorAll(sel));
+/* 要素が見つからない等の理由でボタン登録に失敗しても、
+   他のボタンの登録処理を止めないための安全なイベント登録 */
+function on(sel, evt, fn) {
+  try {
+    const el = $(sel);
+    if (!el) { console.error('要素が見つかりません: ' + sel); return; }
+    el.addEventListener(evt, fn);
+  } catch (e) {
+    console.error('イベント登録に失敗しました: ' + sel, e);
+  }
+}
+function onAll(sel, evt, fn) {
+  try {
+    $$(sel).forEach(el => el.addEventListener(evt, fn));
+  } catch (e) {
+    console.error('イベント登録に失敗しました: ' + sel, e);
+  }
+}
 
 let currentView = 'inspect';
 let editing = null;      // 編集中の点検記録
@@ -73,41 +91,43 @@ function init() {
   const last = localStorage.getItem('fi_lastSite');
   if (last && Store.sites().some(s => s.id === last)) $('#inpSite').value = last;
 
-  // イベント
-  $$('.tab').forEach(b => b.addEventListener('click', () => show(b.dataset.view)));
-  $('#btnBack').addEventListener('click', () => show(currentView === 'master' ? 'settings' : 'inspect'));
-  $('#btnOpenMaster').addEventListener('click', () => show('master'));
-  $('#btnAddMachine').addEventListener('click', addMachine);
-  $('#btnResetMachines').addEventListener('click', resetMachines);
-  $('#inpDate').addEventListener('change', renderMachineGrid);
-  $('#inpSite').addEventListener('change', () => {
+  // イベント登録。
+  // 1か所が要素未検出などで失敗しても、他のボタンの登録が止まらないよう
+  // それぞれ独立して try/catch する（on/onAll ヘルパー）。
+  onAll('.tab', 'click', function () { show(this.dataset.view); });
+  on('#btnBack', 'click', () => show(currentView === 'master' ? 'settings' : 'inspect'));
+  on('#btnOpenMaster', 'click', () => show('master'));
+  on('#btnAddMachine', 'click', addMachine);
+  on('#btnResetMachines', 'click', resetMachines);
+  on('#inpDate', 'change', renderMachineGrid);
+  on('#inpSite', 'change', () => {
     localStorage.setItem('fi_lastSite', $('#inpSite').value);
     renderMachineGrid();
   });
-  $('#inpInspector').addEventListener('change', () => Store.saveSettings({ inspector: $('#inpInspector').value.trim() }));
-  $('#btnSave').addEventListener('click', saveRecord);
-  $('#btnDelete').addEventListener('click', deleteRecord);
-  $$('[data-bulk]').forEach(b => b.addEventListener('click', () => bulkSet(b.dataset.bulk)));
-  $$('#noteJudges .jbtn').forEach(b => b.addEventListener('click', () => setNoteJudge(b.dataset.nj)));
-  $('#notePhotoBtn').addEventListener('click', pickNotePhoto);
-  ['#hisMonth', '#hisSite', '#hisStatus'].forEach(s => $(s).addEventListener('change', renderHistory));
-  ['#todoSite', '#todoKind', '#todoDone'].forEach(s => $(s).addEventListener('change', renderTodo));
-  $('#btnCsv').addEventListener('click', exportCsv);
-  $('#dashMonth').addEventListener('change', renderDash);
-  $('#btnPull').addEventListener('click', pullFromSheet);
-  $('#btnSync').addEventListener('click', () => syncNow(true));
-  $('#btnSaveSettings').addEventListener('click', saveSettings);
-  $('#btnTest').addEventListener('click', testConnection);
-  $('#btnExportJson').addEventListener('click', exportJson);
-  $('#btnClearSynced').addEventListener('click', clearSynced);
+  on('#inpInspector', 'change', () => Store.saveSettings({ inspector: $('#inpInspector').value.trim() }));
+  on('#btnSave', 'click', saveRecord);
+  on('#btnDelete', 'click', deleteRecord);
+  onAll('[data-bulk]', 'click', function () { bulkSet(this.dataset.bulk); });
+  onAll('#noteJudges .jbtn', 'click', function () { setNoteJudge(this.dataset.nj); });
+  on('#notePhotoBtn', 'click', pickNotePhoto);
+  ['#hisMonth', '#hisSite', '#hisStatus'].forEach(s => on(s, 'change', renderHistory));
+  ['#todoSite', '#todoKind', '#todoDone'].forEach(s => on(s, 'change', renderTodo));
+  on('#btnCsv', 'click', exportCsv);
+  on('#dashMonth', 'change', renderDash);
+  on('#btnPull', 'click', pullFromSheet);
+  on('#btnSync', 'click', () => syncNow(true));
+  on('#btnSaveSettings', 'click', saveSettings);
+  on('#btnTest', 'click', testConnection);
+  on('#btnExportJson', 'click', exportJson);
+  on('#btnClearSynced', 'click', clearSynced);
 
-  $('#doneCancel').addEventListener('click', closeDoneDialog);
-  $('#doneSubmit').addEventListener('click', submitDone);
-  $('#donePhotoBtn').addEventListener('click', pickDonePhoto);
-  $('#doneDialog').addEventListener('click', ev => { if (ev.target.id === 'doneDialog') closeDoneDialog(); });
-  $('#lbClose').addEventListener('click', closePhoto);
-  $('#lbShare').addEventListener('click', sharePhoto);
-  $('#lightbox').addEventListener('click', ev => { if (ev.target.id === 'lightbox') closePhoto(); });
+  on('#doneCancel', 'click', closeDoneDialog);
+  on('#doneSubmit', 'click', submitDone);
+  on('#donePhotoBtn', 'click', pickDonePhoto);
+  on('#doneDialog', 'click', ev => { if (ev.target.id === 'doneDialog') closeDoneDialog(); });
+  on('#lbClose', 'click', closePhoto);
+  on('#lbShare', 'click', sharePhoto);
+  on('#lightbox', 'click', ev => { if (ev.target.id === 'lightbox') closePhoto(); });
 
   window.addEventListener('online', () => { updateNet(); if (Store.settings().autoSync) syncNow(false); });
   window.addEventListener('offline', updateNet);
