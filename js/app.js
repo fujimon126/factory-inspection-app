@@ -88,6 +88,8 @@ function init() {
   $('#btnSave').addEventListener('click', saveRecord);
   $('#btnDelete').addEventListener('click', deleteRecord);
   $$('[data-bulk]').forEach(b => b.addEventListener('click', () => bulkSet(b.dataset.bulk)));
+  $$('#noteJudges .jbtn').forEach(b => b.addEventListener('click', () => setNoteJudge(b.dataset.nj)));
+  $('#notePhotoBtn').addEventListener('click', pickNotePhoto);
   ['#hisMonth', '#hisSite', '#hisStatus'].forEach(s => $(s).addEventListener('change', renderHistory));
   ['#todoSite', '#todoKind', '#todoDone'].forEach(s => $(s).addEventListener('change', renderTodo));
   $('#btnCsv').addEventListener('click', exportCsv);
@@ -265,7 +267,65 @@ function openForm(mid, recId) {
   $('#inpNote').value = editing.note || '';
   $('#btnDelete').classList.toggle('hidden', !recId);
   renderItems();
+  renderNoteExtras();
   show('form');
+}
+
+/* 備考欄そのものを「備考」という点検項目として保持する。
+   こうすることで判定・写真・要対応リスト・スプレッドシートの仕組みをそのまま使える。 */
+function noteItem() {
+  let i = editing.items.findIndex(x => x.isNote);
+  if (i < 0) {
+    editing.items.push({
+      name: '備考', isNote: true, type: 'judge', unit: '',
+      judge: '', value: '', note: '', photo: '', photoUrl: ''
+    });
+    i = editing.items.length - 1;
+  }
+  return editing.items[i];
+}
+/* 点検項目として数える対象（備考は除く） */
+function realItems() {
+  return editing.items.filter(x => !x.isNote);
+}
+
+function renderNoteExtras() {
+  const n = noteItem();
+  $$('#noteJudges .jbtn').forEach(b =>
+    b.setAttribute('aria-pressed', b.dataset.nj === n.judge));
+  $('#notePhotoThumb').innerHTML = Util.hasPhoto(n)
+    ? `<div class="thumb"><img src="${Util.photoSrc(n)}" alt="備考の写真"><button id="noteDelPhoto">×</button></div>` : '';
+  if (Util.hasPhoto(n)) $('#noteDelPhoto').addEventListener('click', () => {
+    n.photo = ''; n.photoUrl = ''; n.photoId = '';
+    renderNoteExtras();
+  });
+}
+function setNoteJudge(j) {
+  const n = noteItem();
+  n.judge = n.judge === j ? '' : j;
+  renderNoteExtras();
+}
+async function pickNotePhoto() {
+  const inp = document.createElement('input');
+  inp.type = 'file';
+  inp.accept = 'image/*';
+  inp.capture = 'environment';
+  inp.onchange = async () => {
+    if (!inp.files || !inp.files[0]) return;
+    busy(true, '画像を処理中…');
+    try {
+      const n = noteItem();
+      n.photo = await Util.compressImage(inp.files[0]);
+      n.photoUrl = '';
+      n.photoId = '';
+      renderNoteExtras();
+    } catch (e) {
+      toast('画像を読み込めませんでした', true);
+    } finally {
+      busy(false);
+    }
+  };
+  inp.click();
 }
 
 function renderItems() {
@@ -278,6 +338,7 @@ function renderItems() {
   }
   let lastDosingMachine = '';
   $('#itemList').innerHTML = editing.items.map((it, i) => {
+    if (it.isNote) return '';   // 備考は下部の備考欄に表示するため、ここでは出さない
     const groupHead = it.dosingMachine && it.dosingMachine !== lastDosingMachine
       ? `<div class="dosing-head">⚗️ 投入機 ${esc(it.dosingMachine)}</div>` : '';
     if (it.dosingMachine) lastDosingMachine = it.dosingMachine;
@@ -346,13 +407,14 @@ function setJudge(i, j) {
   }
 }
 function bulkSet(kind) {
-  editing.items.forEach(it => { it.judge = (kind === 'CLEAR' ? '' : kind); });
+  realItems().forEach(it => { it.judge = (kind === 'CLEAR' ? '' : kind); });
   editing.items.forEach(applyDosingJudge);
   renderItems();
 }
 function updateFormProgress() {
-  const total = editing.items.length;
-  const done = editing.items.filter(it => it.judge).length;
+  const items = realItems();
+  const total = items.length;
+  const done = items.filter(it => it.judge).length;
   const pct = total ? Math.round(done / total * 100) : 100;
   $('#formProgress').style.width = pct + '%';
   $('#formProgressText').textContent = total ? `${done} / ${total} 項目　(${pct}%)` : '備考欄に記入';
@@ -389,18 +451,28 @@ async function saveRecord() {
   // 手動変更や古い編集中データがあっても、投入機の測定値を必ず基準どおり再判定する。
   editing.items.forEach(applyDosingJudge);
 
+  // 備考欄の内容を「備考」項目にも反映する（判定・写真つきで記録に残すため）
+  const note = noteItem();
+  note.note = editing.note;
+  // 備考が未入力・判定なし・写真なしなら項目として持たない
+  if (!editing.note && !note.judge && !Util.hasPhoto(note)) {
+    editing.items = editing.items.filter(x => !x.isNote);
+  }
+
+  const items = realItems();
   if (Store.isFree(m)) {
     if (!editing.note) return toast('備考欄を入力してください', true);
   } else {
-    const done = editing.items.filter(it => it.judge).length;
+    const done = items.filter(it => it.judge).length;
     if (done === 0) return toast('点検項目を判定してください', true);
-    if (done < editing.items.length &&
-      !confirm(`未判定の項目が ${editing.items.length - done} 件あります。このまま保存しますか？`)) return;
-    const ngNoNote = editing.items.some(it => it.judge === 'NG' && !it.note);
+    if (done < items.length &&
+      !confirm(`未判定の項目が ${items.length - done} 件あります。このまま保存しますか？`)) return;
+    const ngNoNote = items.some(it => it.judge === 'NG' && !it.note);
     if (ngNoNote && !confirm('「不良」の項目に所見が未記入です。このまま保存しますか？')) return;
   }
 
-  editing.status = Store.isFree(m) ? 'NA' : Util.statusOf(editing);
+  // 備考の判定も総合判定に反映する（その他の機械も備考の判定で決まる）
+  editing.status = Util.statusOf(editing);
   editing.synced = false;
   Store.upsert(editing);
   updatePendingBadge();
