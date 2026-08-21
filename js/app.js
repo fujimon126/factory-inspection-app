@@ -329,7 +329,7 @@ async function pickNotePhoto() {
   const inp = document.createElement('input');
   inp.type = 'file';
   inp.accept = 'image/*';
-  inp.capture = 'environment';
+  // capture指定は付けない：付けるとカメラが強制起動し、写真ライブラリから選べない端末があるため
   inp.onchange = async () => {
     if (!inp.files || !inp.files[0]) return;
     busy(true, '画像を処理中…');
@@ -380,7 +380,7 @@ function renderItems() {
       ${num}
       <div class="subrow">
         <input type="text" placeholder="所見・処置（任意）" value="${esc(it.note)}" data-note="${i}">
-        <button class="photobtn" data-photo="${i}" aria-label="写真を撮影">📷</button>
+        <button class="photobtn" data-photo="${i}" aria-label="写真を撮影・選択">📷</button>
       </div>
       ${photo}
     </div>`;
@@ -444,7 +444,7 @@ async function pickPhoto(i) {
   const inp = document.createElement('input');
   inp.type = 'file';
   inp.accept = 'image/*';
-  inp.capture = 'environment';
+  // capture指定は付けない：付けるとカメラが強制起動し、写真ライブラリから選べない端末があるため
   inp.onchange = async () => {
     if (!inp.files || !inp.files[0]) return;
     busy(true, '画像を処理中…');
@@ -817,7 +817,7 @@ async function pickDonePhoto() {
   const inp = document.createElement('input');
   inp.type = 'file';
   inp.accept = 'image/*';
-  inp.capture = 'environment';
+  // capture指定は付けない：付けるとカメラが強制起動し、写真ライブラリから選べない端末があるため
   inp.onchange = async () => {
     if (!inp.files || !inp.files[0]) return;
     busy(true, '画像を処理中…');
