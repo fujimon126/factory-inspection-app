@@ -483,11 +483,12 @@ async function saveRecord() {
   if (Store.isFree(m)) {
     if (!editing.note) return toast('備考欄を入力してください', true);
   } else {
+    // 備考欄の判定も「判定済み」として数える（備考のみ判定した場合でも保存できるようにする）
     const done = items.filter(it => it.judge).length;
-    if (done === 0) return toast('点検項目を判定してください', true);
+    if (done === 0 && !note.judge) return toast('点検項目を判定してください', true);
     if (done < items.length &&
       !confirm(`未判定の項目が ${items.length - done} 件あります。このまま保存しますか？`)) return;
-    const ngNoNote = items.some(it => it.judge === 'NG' && !it.note);
+    const ngNoNote = items.concat(note.judge ? [note] : []).some(it => it.judge === 'NG' && !it.note);
     if (ngNoNote && !confirm('「不良」の項目に所見が未記入です。このまま保存しますか？')) return;
   }
 
