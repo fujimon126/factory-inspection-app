@@ -47,13 +47,25 @@ const Store = {
   machines() {
     try {
       const m = JSON.parse(localStorage.getItem(LS_MACHINES) || 'null');
-      if (Array.isArray(m) && m.length) return m;
+      if (Array.isArray(m) && m.length) return this.ensureCompletionItem(m);
     } catch (e) { /* 破損時は初期値 */ }
-    return JSON.parse(JSON.stringify(DEFAULT_MACHINES));
+    return this.ensureCompletionItem(JSON.parse(JSON.stringify(DEFAULT_MACHINES)));
   },
   saveMachines(list) {
-    localStorage.setItem(LS_MACHINES, JSON.stringify(list));
+    localStorage.setItem(LS_MACHINES, JSON.stringify(this.ensureCompletionItem(list)));
     window.dispatchEvent(new Event('masterchange'));
+  },
+  // 各機械（備考欄のみの機械を除く）の最後に「点検済み」項目があることを保証する。
+  // 既にカスタマイズ済みの端末にも自動で補われ、常に一番最後の項目になるよう並べ替える。
+  ensureCompletionItem(list) {
+    list.forEach(m => {
+      if (this.isFree(m)) return;
+      const idx = m.items.findIndex(i => i.isCompletion);
+      const item = idx >= 0 ? m.items.splice(idx, 1)[0] : { name: '点検済み', type: 'judge', unit: '' };
+      item.isCompletion = true;
+      m.items.push(item);
+    });
+    return list;
   },
   resetMachines() {
     localStorage.removeItem(LS_MACHINES);
@@ -301,6 +313,12 @@ const Util = {
     }
   },
 
+  // 「点検済み」項目を取り出す。スプレッドシートから取り込んだ記録は isCompletion の目印が
+  // 付かないため、その場合は項目名「点検済み」で代わりに探す。
+  completionItemOf(rec) {
+    const items = (rec && rec.items) || [];
+    return items.find(i => i.isCompletion) || items.find(i => i.name === '点検済み') || null;
+  },
   // 記録全体の判定（不良＞要注意＞良）
   statusOf(rec) {
     const js = (rec.items || []).map(i => i.judge);

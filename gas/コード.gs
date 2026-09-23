@@ -224,24 +224,28 @@ function refreshDashboard_(ss) {
     if (!seenSite[site]) { seenSite[site] = true; sites.push(site); }
     if (!seenMachine[machine]) { seenMachine[machine] = true; machines.push(machine); }
   });
-  // 対象月の記録IDを工場×機械へ対応付け、明細の全判定を確認する。
-  // 「良」以外（不良・要注意・対象外・未判定）が1つでもあれば未完了。
-  var recordKeyById = {}, completion = {};
+  // 対象月の記録IDを工場×機械へ対応付け、各機械の最後にある「点検済み」項目の判定を確認する。
+  // 個々の点検項目に不良・要注意があっても、点検済みが「良」なら完了として扱う
+  // （不良・要注意は要対応リストで別途追跡する）。
+  var recordKeyById = {}, recordCompletionOk = {};
   recRows.forEach(function (r) {
     var site = String(r[3] || ''), machine = String(r[4] || '');
     if (!site || !machine) return;
-    var key = site + '\u0001' + machine;
-    recordKeyById[String(r[0])] = key;
-    completion[key] = completion[key] || { hasItems: false, allGood: true };
+    recordKeyById[String(r[0])] = site + '\u0001' + machine;
   });
   detRows.forEach(function (d) {
-    var key = recordKeyById[String(d[0])];
-    if (!key) return;
-    completion[key].hasItems = true;
-    if (String(d[9]) !== '良') completion[key].allGood = false;
+    var rid = String(d[0]);
+    if (!recordKeyById[rid]) return;
+    if (String(d[8]) === '点検済み') recordCompletionOk[rid] = (String(d[9]) === '良');
   });
-  Object.keys(completion).forEach(function (key) {
-    if (completion[key].hasItems && completion[key].allGood) done[key] = true;
+  var keyRecordIds = {};
+  Object.keys(recordKeyById).forEach(function (rid) {
+    var key = recordKeyById[rid];
+    (keyRecordIds[key] = keyRecordIds[key] || []).push(rid);
+  });
+  Object.keys(keyRecordIds).forEach(function (key) {
+    var ids = keyRecordIds[key];
+    if (ids.length && ids.every(function (rid) { return recordCompletionOk[rid] === true; })) done[key] = true;
   });
 
   var targetTotal = Object.keys(target).length;
@@ -263,7 +267,7 @@ function refreshDashboard_(ss) {
   dash.getRange('G5').setNumberFormat('0%');
   dash.getRange('A6').setValue(inferred
     ? '※ 点検対象マスタが未同期です。現在は記録済みデータだけを対象として仮集計しています。アプリの「今すぐ同期」を実行してください。'
-    : '※ 全点検項目が「良」の機械だけを完了として集計します。対象外・未判定を含む場合は未完了です。')
+    : '※ 各機械の最後にある「点検済み」項目が「良」の場合だけ完了として集計します。不良・要注意があっても、点検済みが良なら完了です。')
     .setFontColor(inferred ? '#b3261e' : '#6b7b8c');
 
   // 工場別進捗
@@ -286,7 +290,7 @@ function refreshDashboard_(ss) {
 
   // 工場×機械マトリクス
   var matrixRow = Math.max(16, 11 + machineStats.length);
-  dash.getRange(matrixRow, 1).setValue('■ 工場 × 機械 点検進捗（済＝全項目良、未＝良以外あり／未点検、－＝対象外）')
+  dash.getRange(matrixRow, 1).setValue('■ 工場 × 機械 点検進捗（済＝点検済みが良、未＝点検済みが良以外／未点検、－＝対象外）')
     .setFontWeight('bold').setFontColor('#0f4c81');
   var matrix = [['点検機械'].concat(sites)];
   machines.forEach(function (machine) {
