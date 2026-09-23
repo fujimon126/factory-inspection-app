@@ -269,3 +269,10 @@ const DEFAULT_MACHINES = [
     items: []
   }
 ];
+
+/* 点検項目を持つ機械（freeOnlyを除く）の最後に「点検済み」項目を自動で追加する。
+   進捗ダッシュボードの完了判定は、個々の点検項目の良否ではなくこの項目を参照する。
+   （不良・要注意があっても、点検自体は完了したことを示せるようにするため） */
+DEFAULT_MACHINES.forEach(m => {
+  if (!m.freeOnly) m.items.push({ name: '点検済み', type: 'judge', unit: '', isCompletion: true });
+});

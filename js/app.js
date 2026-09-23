@@ -273,6 +273,7 @@ function openForm(mid, recId) {
         name: it.name, type: it.type || 'judge', unit: it.unit || '',
         step: it.step || '', dosingMachine: it.dosingMachine || '',
         dosingPort: it.dosingPort || '', chemical: it.chemical || '',
+        isCompletion: !!it.isCompletion,
         judge: '', value: '', note: '', photo: '', photoUrl: ''
       })),
       note: '',
@@ -363,8 +364,10 @@ function renderItems() {
       ? `<div class="dosing-head">⚗️ 投入機 ${esc(it.dosingMachine)}</div>` : '';
     if (it.dosingMachine) lastDosingMachine = it.dosingMachine;
     const autoJudge = isDosingMeasurement(it);
-    const jbtns = ['OK', 'CAUTION', 'NG', 'NA'].map(k =>
-      `<button class="jbtn ${JUDGE[k].cls}" aria-pressed="${it.judge === k}" data-j="${k}" data-i="${i}"${autoJudge ? ' disabled' : ''}>${JUDGE[k].label}</button>`
+    // 完了判定用の項目は「良（完了）」「対象外」の2択のみ（不良・要注意を選べる意味がないため）
+    const judgeKeys = it.isCompletion ? ['OK', 'NA'] : ['OK', 'CAUTION', 'NG', 'NA'];
+    const jbtns = judgeKeys.map(k =>
+      `<button class="jbtn ${JUDGE[k].cls}" aria-pressed="${it.judge === k}" data-j="${k}" data-i="${i}"${autoJudge ? ' disabled' : ''}>${it.isCompletion && k === 'OK' ? '良（完了）' : JUDGE[k].label}</button>`
     ).join('');
     const num = it.type === 'num'
       ? `<div class="numrow">
@@ -373,16 +376,18 @@ function renderItems() {
          </div>` : '';
     const photo = Util.hasPhoto(it)
       ? `<div class="thumb"><img src="${Util.photoSrc(it)}" alt="添付写真"><button data-delphoto="${i}">×</button></div>` : '';
-    return `${groupHead}<div class="item ${it.judge ? JUDGE[it.judge].cls : ''}" data-item="${i}">
+    return `${groupHead}<div class="${itemRowClass(it)}" data-item="${i}">
       <div class="iname"><span class="idx">${i + 1}</span>${esc(it.name)}</div>
-      <div class="judges">${jbtns}</div>
+      ${it.isCompletion ? '<div class="hint" style="margin:-4px 0 8px">この項目を「良」にすると、進捗ダッシュボードでこの機械が完了として集計されます</div>' : ''}
+      <div class="judges${it.isCompletion ? ' judges2' : ''}">${jbtns}</div>
       ${autoJudge ? '<div class="hint">測定値から自動判定（350以上：良／300以上350未満：要注意／300未満：不良）</div>' : ''}
       ${num}
+      ${it.isCompletion ? '' : `
       <div class="subrow">
         <input type="text" placeholder="所見・処置（任意）" value="${esc(it.note)}" data-note="${i}">
         <button class="photobtn" data-photo="${i}" aria-label="写真を撮影・選択">📷</button>
       </div>
-      ${photo}
+      ${photo}`}
     </div>`;
   }).join('');
 
@@ -396,7 +401,7 @@ function renderItems() {
       it.value = inp.value;
       applyDosingJudge(it);
       const row = $(`#itemList [data-item="${i}"]`);
-      row.className = 'item ' + (it.judge ? JUDGE[it.judge].cls : '');
+      row.className = itemRowClass(it);
       row.querySelectorAll('.jbtn').forEach(b => b.setAttribute('aria-pressed', b.dataset.j === it.judge));
       updateFormProgress();
     }));
@@ -409,12 +414,16 @@ function renderItems() {
 function esc(s) {
   return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 }
+/* 点検項目の行クラス（判定色に加え、完了判定用の項目には専用スタイルを付ける） */
+function itemRowClass(it) {
+  return 'item' + (it.judge ? ' ' + JUDGE[it.judge].cls : '') + (it.isCompletion ? ' completionItem' : '');
+}
 
 function setJudge(i, j) {
   if (isDosingMeasurement(editing.items[i])) return;
   editing.items[i].judge = editing.items[i].judge === j ? '' : j;
   const row = $(`#itemList [data-item="${i}"]`);
-  row.className = 'item ' + (editing.items[i].judge ? JUDGE[editing.items[i].judge].cls : '');
+  row.className = itemRowClass(editing.items[i]);
   row.querySelectorAll('.jbtn').forEach(b => b.setAttribute('aria-pressed', b.dataset.j === editing.items[i].judge));
   updateFormProgress();
   // 次の未入力項目へ自動スクロール
@@ -980,8 +989,9 @@ function renderDash() {
   const targets = Store.targets();
   const sites = Store.sites();
 
-  // 進捗は、その工場・機械に属する全記録の全点検項目が「良」の場合だけ完了とする。
-  // 不良・要注意・対象外・未判定が1つでもあれば「未」のまま。
+  // 進捗は、各機械の最後にある「点検済み」項目（isCompletion）が「良」かどうかで完了を判定する。
+  // 個々の点検項目に不良・要注意があっても、点検自体が終わっていれば完了として扱う
+  // （不良・要注意は別途「要対応」として引き続き集計される）。
   const totalTargets = sites.reduce((n, s) => n + (targets[s.id] || []).length, 0);
   const recsByKey = {};
   recs.forEach(r => {
@@ -990,8 +1000,10 @@ function renderDash() {
   });
   const doneKeys = new Set(Object.keys(recsByKey).filter(key => {
     const group = recsByKey[key];
-    return group.length > 0 && group.every(r =>
-      Array.isArray(r.items) && r.items.length > 0 && r.items.every(i => i.judge === 'OK'));
+    return group.length > 0 && group.every(r => {
+      const c = Util.completionItemOf(r);
+      return c && c.judge === 'OK';
+    });
   }));
   const doneTargets = sites.reduce((n, s) =>
     n + (targets[s.id] || []).filter(mid => doneKeys.has(s.id + '|' + mid)).length, 0);
@@ -1030,7 +1042,10 @@ function renderDash() {
       if (doneKeys.has(key)) return '<td class="ok">〇</td>';
       const st = worstStatus(rs);
       const mark = st === 'NG' ? '×' : (st === 'CAUTION' ? '△' : '未');
-      return `<td class="${JUDGE[st].cls}">${mark}</td>`;
+      // 未完了（点検済みが良でない）は、不良・要注意以外なら中立色にする。
+      // 個々の項目が全て良でも「点検済み」が未確認なら緑にはしない。
+      const cls = (st === 'NG' || st === 'CAUTION') ? JUDGE[st].cls : 'pending';
+      return `<td class="${cls}">${mark}</td>`;
     }).join('');
     return `<tr><th>${m.name}</th>${tds}</tr>`;
   }).join('');
@@ -1132,7 +1147,17 @@ let openMachineId = null;   // 開いている機械（再描画時に開いた�
 function renderMaster() {
   const list = Store.machines();
   $('#masterEditor').innerHTML = list.map((m, mi) => {
-    const items = (m.items || []).map((it, ii) => `
+    const items = (m.items || []).map((it, ii) => {
+      if (it.isCompletion) {
+        // システム項目：進捗ダッシュボードの完了判定に使うため、種別変更・削除・並べ替えはできない
+        return `<div class="mrow mrow-system">
+          <span class="mno">${ii + 1}</span>
+          <input type="text" class="mname" value="${esc(it.name)}" placeholder="点検項目名"
+                 data-mid="${m.id}" data-ii="${ii}" data-f="name">
+          <span class="mtag">完了判定に使用・削除不可</span>
+        </div>`;
+      }
+      return `
       <div class="mrow">
         <span class="mno">${ii + 1}</span>
         <input type="text" class="mname" value="${esc(it.name)}" placeholder="点検項目名"
@@ -1144,9 +1169,10 @@ function renderMaster() {
         <input type="text" class="munit ${it.type === 'num' ? '' : 'hidden'}" value="${esc(it.unit || '')}"
                placeholder="単位" data-mid="${m.id}" data-ii="${ii}" data-f="unit">
         <button class="miconbtn" data-move-item="${m.id}" data-ii="${ii}" data-dir="-1" ${ii === 0 ? 'disabled' : ''}>↑</button>
-        <button class="miconbtn" data-move-item="${m.id}" data-ii="${ii}" data-dir="1" ${ii === (m.items.length - 1) ? 'disabled' : ''}>↓</button>
+        <button class="miconbtn" data-move-item="${m.id}" data-ii="${ii}" data-dir="1" ${ii === (m.items.length - 2) ? 'disabled' : ''}>↓</button>
         <button class="miconbtn del" data-del-item="${m.id}" data-ii="${ii}">×</button>
-      </div>`).join('');
+      </div>`;
+    }).join('');
 
     return `<details class="mcardedit" ${openMachineId === m.id ? 'open' : ''} data-machine="${m.id}">
       <summary><span class="mico">${m.icon || '🔧'}</span>${esc(m.name)}
@@ -1229,6 +1255,7 @@ function renderMaster() {
     const list = Store.machines();
     const m = list.find(x => x.id === b.dataset.delItem);
     const it = m.items[+b.dataset.ii];
+    if (it.isCompletion) return toast('この項目は削除できません', true);
     if (!confirm(`点検項目「${it.name}」を削除します。よろしいですか？\n（過去の点検記録は残ります）`)) return;
     m.items.splice(+b.dataset.ii, 1);
     Store.saveMachines(list);
@@ -1240,7 +1267,10 @@ function renderMaster() {
   $$('#masterEditor [data-move-item]').forEach(b => b.addEventListener('click', () => {
     const list = Store.machines();
     const m = list.find(x => x.id === b.dataset.moveItem);
-    move(m.items, +b.dataset.ii, +b.dataset.dir);
+    const ii = +b.dataset.ii, dir = +b.dataset.dir;
+    // 完了判定用の項目は常に最後に固定するため、それを飛び越える移動は行わない
+    if (m.items[ii].isCompletion || (m.items[ii + dir] && m.items[ii + dir].isCompletion)) return;
+    move(m.items, ii, dir);
     Store.saveMachines(list);
     openMachineId = m.id;
     renderMaster();
