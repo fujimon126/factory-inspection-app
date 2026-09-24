@@ -154,29 +154,28 @@ const Store = {
     if (!s.gasUrl) throw new Error('スプレッドシートの連携URLが未設定です（設定タブ）');
     const pending = this.unsynced();
 
-    // 進捗率の分母となる「工場×機械」の点検対象設定を先に同期する。
-    const masterRes = await fetch(s.gasUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({ action: 'syncMaster', master: this.masterPayload() })
-    });
-    const masterJson = await masterRes.json();
-    if (!masterJson.ok) throw new Error(masterJson.error || '点検対象設定の同期に失敗しました');
+    // 進捗率の分母となる「工場×機械」の点検対象設定を同期する。
+    // シート側で再集計が走り数秒かかるため、前回送信から変更が無いときは送らない。
+    const payload = this.masterPayload();
+    const masterHash = JSON.stringify(payload);
+    let targets = s.lastMasterTargets || 0;
+    let masterSent = false;
+    if (masterHash !== s.lastMasterHash) {
+      const masterJson = await this.post(s.gasUrl, { action: 'syncMaster', master: payload });
+      if (!masterJson.ok) throw new Error(masterJson.error || '点検対象設定の同期に失敗しました');
+      targets = masterJson.targets || 0;
+      masterSent = true;
+      this.saveSettings({ lastMasterHash: masterHash, lastMasterTargets: targets });
+    }
 
     let sent = 0;
     for (let pendingIndex = 0; pendingIndex < pending.length; pendingIndex++) {
       const rec = pending[pendingIndex];
-      const res = await fetch(s.gasUrl, {
-        method: 'POST',
-        // text/plain にすると CORS プリフライトを回避できる（GAS 側で JSON.parse）
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({
-          action: 'save',
-          record: rec,
-          refresh: pendingIndex === pending.length - 1
-        })
+      const json = await this.post(s.gasUrl, {
+        action: 'save',
+        record: rec,
+        refresh: pendingIndex === pending.length - 1
       });
-      const json = await res.json();
       if (!json.ok) throw new Error(json.error || '保存に失敗しました');
       const list = this.records();
       const i = list.findIndex(r => r.id === rec.id);
@@ -199,7 +198,28 @@ const Store = {
       }
       sent++;
     }
-    return { sent, targets: masterJson.targets || 0 };
+    return { sent, targets, masterSent };
+  },
+
+  // GASへPOSTする。text/plain にすると CORS プリフライトを回避できる（GAS 側で JSON.parse）。
+  // 応答が無いまま画面が固まらないよう、90秒で時間切れにする。
+  async post(url, body) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 90000);
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify(body),
+        signal: ctrl.signal
+      });
+      return await res.json();
+    } catch (e) {
+      if (e && e.name === 'AbortError') throw new Error('スプレッドシートからの応答がありません（時間切れ）。しばらくして再度お試しください');
+      throw e;
+    } finally {
+      clearTimeout(timer);
+    }
   },
 
   async pull(ym) {

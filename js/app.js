@@ -549,6 +549,11 @@ function deleteRecord() {
 }
 
 /* ---------------- 同期 ---------------- */
+/* 同期は同時に1つだけ実行する。
+   保存後の自動送信・設定変更の自動送信・手動送信が重なると、シート側の排他ロックが
+   取れず失敗するため、実行中に来た要求は終了後に1回だけまとめて実行する。 */
+let syncRunning = false;
+let syncAgain = false;
 async function syncNow(manual) {
   const st = Store.settings();
   if (!st.gasUrl) {
@@ -556,19 +561,30 @@ async function syncNow(manual) {
     return;
   }
   if (!navigator.onLine) { if (manual) toast('オフラインです。通信可能になったら送信されます', true); return; }
+  if (syncRunning) {
+    syncAgain = true;
+    if (manual) toast('送信中です。完了までしばらくお待ちください');
+    return;
+  }
+  syncRunning = true;
   const n = Store.unsynced().length;
-  if (manual) busy(true, n ? `送信中… (${n}件)` : '点検対象設定を同期中…');
+  if (manual) busy(true, n ? `送信中… (${n}件・1件あたり数秒かかります)` : '点検対象設定を同期中…');
   try {
     const r = await Store.push();
-    toast(r.sent
-      ? `点検対象設定と点検記録 ${r.sent} 件を送信しました`
-      : `点検対象設定 ${r.targets} 項目を同期しました`);
+    if (r.sent) toast(`点検記録 ${r.sent} 件を送信しました`);
+    else if (r.masterSent) toast(`点検対象設定 ${r.targets} 項目を同期しました`);
+    else if (manual) toast('すべて送信済みです');
   } catch (e) {
     toast('送信に失敗：' + e.message, true);
   } finally {
+    syncRunning = false;
     busy(false);
     updatePendingBadge();
     if (currentView === 'history') renderHistory();
+    if (syncAgain) {
+      syncAgain = false;
+      syncNow(false);
+    }
   }
 }
 
@@ -1376,11 +1392,14 @@ function saveSettings() {
   if (url && !/^https:\/\/script\.google\.com\/macros\/s\/.+\/exec/.test(url)) {
     if (!confirm('GASのウェブアプリURL形式ではないようです。このまま保存しますか？')) return;
   }
+  // 連携先が変わったら、点検対象設定を新しい連携先へ必ず送り直す
+  const urlChanged = url !== (Store.settings().gasUrl || '');
   Store.saveSettings({
     gasUrl: url,
     inspector: $('#setInspector').value.trim(),
     autoSync: $('#setAutoSync').checked
   });
+  if (urlChanged) Store.saveSettings({ lastMasterHash: '', lastMasterTargets: 0 });
   $('#inpInspector').value = $('#setInspector').value.trim();
   toast('設定を保存しました');
 }
