@@ -470,7 +470,7 @@ function getSheet_(ss, name, head) {
 function doPost(e) {
   var lock = LockService.getScriptLock();
   try {
-    lock.waitLock(30000);
+    lock.waitLock(120000);
     var body = JSON.parse(e.postData.contents);
     if (body.action === 'syncMaster') return json_(syncTargetMaster_(body.master));
     if (body.action === 'save') return json_(saveRecord_(body.record, body.refresh !== false));
@@ -629,13 +629,19 @@ function findRow_(sh, id) {
   return -1;
 }
 
+/* 指定IDの行を削除する。1行ずつ削除すると非常に遅いため、
+   連続している行をブロックにまとめて deleteRows で一括削除する（下のブロックから）。 */
 function deleteDetail_(sh, id) {
   var last = sh.getLastRow();
   if (last < 2) return;
   var ids = sh.getRange(2, 1, last - 1, 1).getValues();
-  for (var i = ids.length - 1; i >= 0; i--) {
-    if (String(ids[i][0]) === String(id)) sh.deleteRow(i + 2);
+  var blocks = [], start = -1;
+  for (var i = 0; i <= ids.length; i++) {
+    var hit = i < ids.length && String(ids[i][0]) === String(id);
+    if (hit && start < 0) start = i;
+    if (!hit && start >= 0) { blocks.push([start + 2, i - start]); start = -1; }
   }
+  for (var b = blocks.length - 1; b >= 0; b--) sh.deleteRows(blocks[b][0], blocks[b][1]);
 }
 
 function savePhoto_(dataUrl, name) {
