@@ -94,6 +94,7 @@ select{appearance:none;background-image:linear-gradient(45deg,transparent 50%,va
 .mcard .num{position:absolute;top:6px;left:8px;font-size:10px;color:var(--muted);font-weight:600}
 .mcard .flag{position:absolute;top:6px;right:6px;font-size:11px;padding:2px 6px;border-radius:20px;color:#fff;font-weight:700}
 .mcard.done{border-color:#b8e0c6;background:#f2fbf5}
+.mcard .mdate{font-size:11px;font-weight:600;color:var(--muted)}
 .flag.ok{background:var(--ok)}
 .flag.caution{background:var(--caution)}
 .flag.ng{background:var(--ng)}

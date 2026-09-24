@@ -162,21 +162,35 @@ function updatePendingBadge() {
 }
 
 /* ---------------- ③ 機械選択 ---------------- */
+/* 点検は毎月実施のため、選択中の日付が属する「月」の記録を対象にする（新しい日付が来ても消えない） */
+function monthRecords(siteId, mid) {
+  const ym = Util.ym($('#inpDate').value);
+  return Store.records()
+    .filter(r => Util.ym(r.date) === ym && sameSite(r, siteId) && (!mid || r.machineId === mid))
+    .sort((a, b) => (b.date + (b.createdAt || '')).localeCompare(a.date + (a.createdAt || '')));
+}
+function shortDate(d) {
+  const p = String(d || '').split('-');
+  return p.length === 3 ? `${+p[1]}/${+p[2]}` : '';
+}
+
 function renderMachineGrid() {
   const date = $('#inpDate').value, siteId = $('#inpSite').value;
-  const todays = Store.records().filter(r => r.date === date && sameSite(r, siteId));
+  const monthRecs = monthRecords(siteId);
   const targets = Store.targets()[siteId] || [];
+  const [y, mo] = Util.ym(date).split('-');
 
   $('#dayHint').textContent =
-    `${Util.fmtDate(date)}　${siteName(siteId)}　本日 ${todays.length} 件登録済 / 対象 ${targets.length} 項目`;
+    `${y}年${+mo}月　${siteName(siteId)}　今月 ${monthRecs.length} 件登録済 / 対象 ${targets.length} 項目`;
 
   $('#machineGrid').innerHTML = Store.machines().map((m, i) => {
-    const recs = todays.filter(r => r.machineId === m.id);
+    const recs = monthRecs.filter(r => r.machineId === m.id);
     const st = recs.length ? worstStatus(recs) : null;
     const flag = st ? `<span class="flag ${JUDGE[st].cls}">${recs.length > 1 ? recs.length + '件 ' : ''}${JUDGE[st].label}</span>` : '';
+    const last = recs.length ? `<span class="mdate">${shortDate(recs[0].date)} 実施</span>` : '';
     return `<button class="mcard ${recs.length ? 'done' : ''}" data-mid="${m.id}">
       <span class="num">${i + 1}</span>${flag}
-      <span class="ico">${m.icon}</span>${m.name}
+      <span class="ico">${m.icon}</span>${m.name}${last}
     </button>`;
   }).join('');
 
@@ -196,14 +210,14 @@ function worstStatus(recs) {
 }
 
 function onPickMachine(mid) {
-  const date = $('#inpDate').value, siteId = $('#inpSite').value;
-  const exist = Store.records().filter(r => r.date === date && sameSite(r, siteId) && r.machineId === mid);
+  const siteId = $('#inpSite').value;
+  const exist = monthRecords(siteId, mid);
   if (exist.length === 0) return openForm(mid, null);
 
-  // 既存記録あり → 編集 or 新規（別号機）を選択
-  const names = exist.map((r, i) => `${i + 1}. ${r.unit || '（号機未入力）'}／${JUDGE[r.status].label}`).join('\n');
+  // 今月の既存記録あり → 編集 or 新規（別号機・別日）を選択
+  const names = exist.map((r, i) => `${i + 1}. ${shortDate(r.date)} ${r.unit || '（号機未入力）'}／${JUDGE[r.status].label}`).join('\n');
   const ans = prompt(
-    `${Store.machineById(mid).name} はこの日すでに登録があります。\n${names}\n\n編集する番号を入力（新規追加は「n」）`,
+    `${Store.machineById(mid).name} は今月すでに登録があります。\n${names}\n\n編集する番号を入力（新規追加は「n」）`,
     '1'
   );
   if (ans === null) return;
