@@ -271,6 +271,19 @@ function openForm(mid, recId) {
   if (!m) return toast('この点検機械は削除されています', true);
   if (recId) {
     editing = JSON.parse(JSON.stringify(Store.get(recId)));
+    // 「点検済み」項目の追加前に保存した記録には項目が無いため、開いたときに補う。
+    // シートから取り込んだ記録は目印(isCompletion)が無いので、名前で見つけて目印を付け直す。
+    if (!Store.isFree(m)) {
+      const c = Util.completionItemOf(editing);
+      if (c) {
+        c.isCompletion = true;
+      } else if ((m.items || []).some(i => i.isCompletion)) {
+        editing.items.push({
+          name: '点検済み', type: 'judge', unit: '', isCompletion: true,
+          judge: '', value: '', note: '', photo: '', photoUrl: ''
+        });
+      }
+    }
   } else {
     const site = siteName($('#inpSite').value);
     const inspectionItems = inspectionItemsForMachine(m, site);
