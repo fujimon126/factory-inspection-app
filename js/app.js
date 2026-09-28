@@ -54,7 +54,7 @@ function show(view) {
   window.scrollTo(0, 0);
   if (view === 'inspect') renderMachineGrid();
   if (view === 'todo') renderTodo();
-  if (view === 'history') renderHistory();
+  if (view === 'history') { renderHistory(); updateMoveCount(); }
   if (view === 'dash') renderDash();
   if (view === 'settings') renderSettings();
   if (view === 'master') renderMaster();
@@ -69,6 +69,13 @@ function renderSiteOptions() {
   $('#inpSite').innerHTML = opts;
   $('#hisSite').innerHTML = '<option value="">すべての場所</option>' + opts;
   $('#todoSite').innerHTML = '<option value="">すべての場所</option>' + opts;
+  const frmCur = $('#frmSite').value, mvFromCur = $('#mvFrom').value, mvToCur = $('#mvTo').value;
+  $('#frmSite').innerHTML = opts;
+  $('#mvFrom').innerHTML = opts;
+  $('#mvTo').innerHTML = opts;
+  if (sites.some(s => s.id === frmCur)) $('#frmSite').value = frmCur;
+  if (sites.some(s => s.id === mvFromCur)) $('#mvFrom').value = mvFromCur;
+  if (sites.some(s => s.id === mvToCur)) $('#mvTo').value = mvToCur;
   if (sites.some(s => s.id === cur)) $('#inpSite').value = cur;
   if (hisCur === '' || sites.some(s => s.id === hisCur)) $('#hisSite').value = hisCur;
   if (todoCur === '' || sites.some(s => s.id === todoCur)) $('#todoSite').value = todoCur;
@@ -113,6 +120,9 @@ function init() {
   ['#hisMonth', '#hisSite', '#hisStatus'].forEach(s => on(s, 'change', renderHistory));
   ['#todoSite', '#todoKind', '#todoDone'].forEach(s => on(s, 'change', renderTodo));
   on('#btnCsv', 'click', exportCsv);
+  $('#mvDate').value = Util.today();
+  ['#mvDate', '#mvFrom', '#mvTo'].forEach(s => on(s, 'change', updateMoveCount));
+  on('#btnMove', 'click', moveRecordsSite);
   on('#dashMonth', 'change', renderDash);
   on('#btnPull', 'click', pullFromSheet);
   on('#btnSync', 'click', () => syncNow(true));
@@ -313,6 +323,10 @@ function openForm(mid, recId) {
     `${m.icon} ${m.name}<small>${Util.fmtDate(editing.date)}　${esc(editing.site)}　点検者：${esc(editing.inspector || '－')}</small>`;
   $('#inpUnit').value = editing.unit || '';
   $('#inpNote').value = editing.note || '';
+  // 点検場所・点検日は後から修正できる（場所を間違えて入力した場合など）
+  const formSiteId = editing.siteId || Store.siteIdByName(editing.site);
+  if (formSiteId) $('#frmSite').value = formSiteId;
+  $('#frmDate').value = editing.date || '';
   $('#btnDelete').classList.toggle('hidden', !recId);
   renderItems();
   renderNoteExtras();
@@ -501,6 +515,17 @@ async function saveRecord() {
   editing.unit = $('#inpUnit').value.trim();
   editing.note = $('#inpNote').value.trim();
   editing.inspector = $('#inpInspector').value.trim();
+
+  // 点検場所・点検日の変更を反映する
+  const newSiteId = $('#frmSite').value;
+  const oldSiteId = editing.siteId || Store.siteIdByName(editing.site);
+  if (newSiteId && newSiteId !== oldSiteId) {
+    if (editing.machineId === 'm20' &&
+      !confirm('投入機は工場ごとに測定項目が異なります。入力済みの測定項目のまま場所だけ変更しますか？\n（項目を合わせたい場合は、正しい場所で入力し直してください）')) return;
+    editing.siteId = newSiteId;
+  }
+  const newDate = $('#frmDate').value;
+  if (newDate) editing.date = newDate;
   if (editing.siteId) editing.site = siteName(editing.siteId) || editing.site; // 最新の工場名を反映
   const m = Store.machineById(editing.machineId) || { items: [] };
 
@@ -939,6 +964,39 @@ function unresolveItem(rid, idx) {
   updateTodoBadge();
   renderTodo();
   toast('未対応に戻しました');
+  if (Store.settings().autoSync && Store.settings().gasUrl && navigator.onLine) syncNow(false);
+}
+
+/* ---------------- 点検場所の一括変更 ---------------- */
+function moveTargets() {
+  const date = $('#mvDate').value, from = $('#mvFrom').value;
+  return Store.records().filter(r => r.date === date && sameSite(r, from));
+}
+function updateMoveCount() {
+  const n = moveTargets().length;
+  $('#mvCount').textContent = `対象：${n} 件（${siteName($('#mvFrom').value)} → ${siteName($('#mvTo').value)}）`;
+}
+function moveRecordsSite() {
+  const to = $('#mvTo').value, from = $('#mvFrom').value;
+  if (to === from) return toast('誤った場所と正しい場所が同じです', true);
+  const targets = moveTargets();
+  if (!targets.length) return toast('対象の記録がありません', true);
+  const hasDosing = targets.some(r => r.machineId === 'm20');
+  if (!confirm(`${Util.fmtDate($('#mvDate').value)} の ${siteName(from)} の記録 ${targets.length} 件を「${siteName(to)}」に変更します。` +
+    (hasDosing ? '\n\n※投入機は工場ごとに測定項目が異なるため、入力済みの項目のまま移動します。' : '') +
+    '\n\nよろしいですか？')) return;
+  const ids = new Set(targets.map(r => r.id));
+  const toName = siteName(to);
+  const list = Store.records().map(r => {
+    if (!ids.has(r.id)) return r;
+    return Object.assign(r, { siteId: to, site: toName, synced: false, updatedAt: new Date().toISOString() });
+  });
+  Store.writeAll(list);
+  updatePendingBadge();
+  updateTodoBadge();
+  renderHistory();
+  updateMoveCount();
+  toast(`${targets.length} 件を ${toName} に変更しました`);
   if (Store.settings().autoSync && Store.settings().gasUrl && navigator.onLine) syncNow(false);
 }
 

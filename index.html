@@ -51,6 +51,14 @@
     <div class="card sticky-info">
       <div id="formHead" class="formhead"></div>
       <div class="field inline">
+        <label for="frmSite">点検場所</label>
+        <select id="frmSite"></select>
+      </div>
+      <div class="field inline">
+        <label for="frmDate">点検日</label>
+        <input type="date" id="frmDate">
+      </div>
+      <div class="field inline">
         <label for="inpUnit">号機・設備No.</label>
         <input type="text" id="inpUnit" placeholder="例）1号機（任意）">
       </div>
@@ -134,6 +142,24 @@
       </div>
       <button id="btnCsv" class="btn ghost sm">CSV出力</button>
     </div>
+    <details class="card movebox">
+      <summary>点検場所を間違えて入力した場合（一括変更）</summary>
+      <p class="hint">指定した日に、誤った場所で入力した記録をまとめて正しい場所へ移します。スプレッドシートも上書きされます。</p>
+      <div class="field inline">
+        <label for="mvDate">点検日</label>
+        <input type="date" id="mvDate">
+      </div>
+      <div class="field inline">
+        <label for="mvFrom">誤った場所</label>
+        <select id="mvFrom"></select>
+      </div>
+      <div class="field inline">
+        <label for="mvTo">正しい場所</label>
+        <select id="mvTo"></select>
+      </div>
+      <p class="hint" id="mvCount"></p>
+      <button id="btnMove" class="btn primary" style="width:100%">点検場所を変更する</button>
+    </details>
     <div id="historyList"></div>
   </section>
 
