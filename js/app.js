@@ -351,43 +351,61 @@ function realItems() {
   return editing.items.filter(x => !x.isNote);
 }
 
+/* ---- 写真（1項目に複数枚） ---- */
+/* 画像を選ばせ（複数選択可）、縮小したDataURLの配列を onDone に渡す */
+function pickImages(onDone) {
+  const inp = document.createElement('input');
+  inp.type = 'file';
+  inp.accept = 'image/*';
+  inp.multiple = true;
+  // capture指定は付けない：付けるとカメラが強制起動し、写真ライブラリから選べない端末があるため
+  inp.onchange = async () => {
+    const files = Array.from(inp.files || []);
+    if (!files.length) return;
+    busy(true, `画像を処理中…（${files.length}枚）`);
+    const urls = [];
+    let failed = 0;
+    for (const f of files) {
+      try { urls.push(await Util.compressImage(f)); } catch (e) { failed++; }
+    }
+    busy(false);
+    if (failed) toast(`${failed}枚の画像を読み込めませんでした`, true);
+    if (urls.length) onDone(urls);
+  };
+  inp.click();
+}
+/* 写真一覧のサムネイル（編集用：×で1枚ずつ削除） */
+function editThumbs(photos, attr) {
+  return photos.length ? '<div class="thumbs">' + photos.map((p, k) =>
+    `<div class="thumb"><img src="${Util.photoSrc(p)}" alt="添付写真${k + 1}"><button ${attr}="${k}" aria-label="写真${k + 1}を削除">×</button></div>`
+  ).join('') + '</div>' : '';
+}
+
 function renderNoteExtras() {
   const n = noteItem();
   $$('#noteJudges .jbtn').forEach(b =>
     b.setAttribute('aria-pressed', b.dataset.nj === n.judge));
-  $('#notePhotoThumb').innerHTML = Util.hasPhoto(n)
-    ? `<div class="thumb"><img src="${Util.photoSrc(n)}" alt="備考の写真"><button id="noteDelPhoto">×</button></div>` : '';
-  if (Util.hasPhoto(n)) $('#noteDelPhoto').addEventListener('click', () => {
-    n.photo = ''; n.photoUrl = ''; n.photoId = '';
+  const photos = Util.photosOf(n);
+  $('#notePhotoThumb').innerHTML = editThumbs(photos, 'data-notedel');
+  $$('#notePhotoThumb [data-notedel]').forEach(b => b.addEventListener('click', () => {
+    const list = Util.photosOf(n);
+    list.splice(+b.dataset.notedel, 1);
+    Util.setPhotos(n, list);
     renderNoteExtras();
-  });
+  }));
+  $('#notePhotoBtn').textContent = photos.length ? `📷 備考に写真を追加（${photos.length}枚）` : '📷 備考に写真を添付';
 }
 function setNoteJudge(j) {
   const n = noteItem();
   n.judge = n.judge === j ? '' : j;
   renderNoteExtras();
 }
-async function pickNotePhoto() {
-  const inp = document.createElement('input');
-  inp.type = 'file';
-  inp.accept = 'image/*';
-  // capture指定は付けない：付けるとカメラが強制起動し、写真ライブラリから選べない端末があるため
-  inp.onchange = async () => {
-    if (!inp.files || !inp.files[0]) return;
-    busy(true, '画像を処理中…');
-    try {
-      const n = noteItem();
-      n.photo = await Util.compressImage(inp.files[0]);
-      n.photoUrl = '';
-      n.photoId = '';
-      renderNoteExtras();
-    } catch (e) {
-      toast('画像を読み込めませんでした', true);
-    } finally {
-      busy(false);
-    }
-  };
-  inp.click();
+function pickNotePhoto() {
+  pickImages(urls => {
+    const n = noteItem();
+    Util.setPhotos(n, Util.photosOf(n).concat(urls.map(u => ({ photo: u, photoUrl: '', photoId: '' }))));
+    renderNoteExtras();
+  });
 }
 
 function renderItems() {
@@ -415,8 +433,8 @@ function renderItems() {
            <input type="number" inputmode="decimal" step="any" placeholder="測定値" value="${esc(it.value)}" data-num="${i}">
            <span class="unit">${it.unit}</span>
          </div>` : '';
-    const photo = Util.hasPhoto(it)
-      ? `<div class="thumb"><img src="${Util.photoSrc(it)}" alt="添付写真"><button data-delphoto="${i}">×</button></div>` : '';
+    const photos = Util.photosOf(it);
+    const photo = editThumbs(photos, `data-delphoto-i="${i}" data-delphoto`);
     return `${groupHead}<div class="${itemRowClass(it)}" data-item="${i}">
       <div class="iname"><span class="idx">${i + 1}</span>${esc(it.name)}</div>
       ${it.isCompletion ? '<div class="hint" style="margin:-4px 0 8px">この項目を「良」にすると、進捗ダッシュボードでこの機械が完了として集計されます</div>' : ''}
@@ -426,7 +444,7 @@ function renderItems() {
       ${it.isCompletion ? '' : `
       <div class="subrow">
         <input type="text" placeholder="所見・処置（任意）" value="${esc(it.note)}" data-note="${i}">
-        <button class="photobtn" data-photo="${i}" aria-label="写真を撮影・選択">📷</button>
+        <button class="photobtn" data-photo="${i}" aria-label="写真を撮影・選択（複数可）">📷${photos.length ? `<span class="pcount">${photos.length}</span>` : ''}</button>
       </div>
       ${photo}`}
     </div>`;
@@ -449,7 +467,13 @@ function renderItems() {
   $$('#itemList [data-photo]').forEach(b =>
     b.addEventListener('click', () => pickPhoto(+b.dataset.photo)));
   $$('#itemList [data-delphoto]').forEach(b =>
-    b.addEventListener('click', () => { const i = +b.dataset.delphoto; editing.items[i].photo = ''; editing.items[i].photoUrl = ''; renderItems(); }));
+    b.addEventListener('click', () => {
+      const it = editing.items[+b.dataset.delphotoI];
+      const list = Util.photosOf(it);
+      list.splice(+b.dataset.delphoto, 1);
+      Util.setPhotos(it, list);
+      renderItems();
+    }));
   updateFormProgress();
 }
 function esc(s) {
@@ -490,25 +514,12 @@ function updateFormProgress() {
   $('#formProgressText').textContent = total ? `${done} / ${total} 項目　(${pct}%)` : '備考欄に記入';
 }
 
-async function pickPhoto(i) {
-  const inp = document.createElement('input');
-  inp.type = 'file';
-  inp.accept = 'image/*';
-  // capture指定は付けない：付けるとカメラが強制起動し、写真ライブラリから選べない端末があるため
-  inp.onchange = async () => {
-    if (!inp.files || !inp.files[0]) return;
-    busy(true, '画像を処理中…');
-    try {
-      editing.items[i].photo = await Util.compressImage(inp.files[0]);
-      editing.items[i].photoUrl = '';
-      renderItems();
-    } catch (e) {
-      toast('画像を読み込めませんでした', true);
-    } finally {
-      busy(false);
-    }
-  };
-  inp.click();
+function pickPhoto(i) {
+  pickImages(urls => {
+    const it = editing.items[i];
+    Util.setPhotos(it, Util.photosOf(it).concat(urls.map(u => ({ photo: u, photoUrl: '', photoId: '' }))));
+    renderItems();
+  });
 }
 
 async function saveRecord() {
@@ -556,7 +567,12 @@ async function saveRecord() {
   // 備考の判定も総合判定に反映する（その他の機械も備考の判定で決まる）
   editing.status = Util.statusOf(editing);
   editing.synced = false;
-  Store.upsert(editing);
+  try {
+    Store.upsert(editing);
+  } catch (e) {
+    // 送信前の写真は端末内に保存されるため、枚数が多いと容量が足りなくなることがある
+    return toast('端末の保存容量が足りません。⇅ボタンで未送信の記録を送信してから、もう一度保存してください', true);
+  }
   updatePendingBadge();
   updateTodoBadge();
   toast('保存しました');
@@ -630,32 +646,40 @@ async function pullFromSheet() {
 /* ---------------- 写真の表示・共有 ---------------- */
 /* 記録内の写真つき項目を一覧のサムネイルにする */
 function photoStrip(rec) {
-  const withPhoto = (rec.items || []).map((it, i) => ({ it, i })).filter(x => Util.hasPhoto(x.it));
-  if (!withPhoto.length) return '';
-  return '<div class="photos">' + withPhoto.map(x =>
-    `<button class="pthumb" data-photo-rid="${rec.id}" data-photo-i="${x.i}" title="${esc(x.it.name)}">
-       <img src="${Util.photoSrc(x.it)}" alt="${esc(x.it.name)}" loading="lazy">
-       ${x.it.judge === 'NG' ? '<span class="pbadge ng">不良</span>' : x.it.judge === 'CAUTION' ? '<span class="pbadge caution">注意</span>' : ''}
-     </button>`).join('') + '</div>';
+  const thumbs = [];
+  (rec.items || []).forEach((it, i) => {
+    Util.photosOf(it).forEach((p, k) => thumbs.push(photoThumb(rec.id, i, k, 'item', p, it.name,
+      it.judge === 'NG' ? '<span class="pbadge ng">不良</span>' : it.judge === 'CAUTION' ? '<span class="pbadge caution">注意</span>' : '')));
+  });
+  return thumbs.length ? '<div class="photos">' + thumbs.join('') + '</div>' : '';
+}
+/* サムネイル1枚分（タップで拡大表示） */
+function photoThumb(rid, i, k, kind, p, name, badge) {
+  return `<button class="pthumb" data-photo-rid="${rid}" data-photo-i="${i}" data-photo-k="${k}" data-kind="${kind}" title="${esc(name)}">
+    <img src="${Util.photoSrc(p)}" alt="${esc(name)}" loading="lazy">${badge || ''}</button>`;
 }
 /* サムネイルのタップで拡大表示を開く */
 function bindPhotoStrips(root) {
   $$(root + ' [data-photo-rid]').forEach(b => b.addEventListener('click', ev => {
     ev.stopPropagation();
-    openPhoto(b.dataset.photoRid, +b.dataset.photoI, b.dataset.kind);
+    openPhoto(b.dataset.photoRid, +b.dataset.photoI, b.dataset.kind, +(b.dataset.photoK || 0));
   }));
 }
 
 let lightboxTarget = null;
-function openPhoto(rid, idx, kind) {
+function openPhoto(rid, idx, kind, k) {
   const rec = Store.get(rid);
   if (!rec) return;
   const item = rec.items[idx];
-  // 「対応後」の写真は別項目として扱う
-  const it = kind === 'resolved' ? Util.resolvedPhotoOf(item) : item;
-  it.name = item.name + (kind === 'resolved' ? '（対応後）' : '');
-  it.judge = item.judge;
-  it.note = kind === 'resolved' ? (item.resolvedNote || '') : (item.note || '');
+  const resolved = kind === 'resolved';
+  const list = resolved ? Util.resolvedPhotosOf(item) : Util.photosOf(item);
+  const p = list[k || 0];
+  if (!p) return;
+  const it = Object.assign({}, p, {
+    name: item.name + (resolved ? '（対応後）' : '') + (list.length > 1 ? ` ${(k || 0) + 1}/${list.length}` : ''),
+    judge: item.judge,
+    note: resolved ? (item.resolvedNote || '') : (item.note || '')
+  });
   lightboxTarget = { rec, it };
   $('#lightboxImg').src = Util.photoSrc(it);
   const link = Util.photoLink(it);
@@ -717,23 +741,22 @@ async function shareRecord(rid) {
   }
   if (r.note) lines.push('', `備考：${r.note}`);
 
-  const links = (r.items || []).filter(i => Util.photoLink(i));
-  if (links.length) {
-    lines.push('', '■ 写真');
-    links.forEach(i => lines.push(`・${i.name}：${Util.photoLink(i)}`));
-  }
-  const text = lines.join('\n');
-
-  // 未送信の写真は画像ファイルとして直接共有する
+  // 送信済みの写真はリンク、未送信の写真は画像ファイルとして共有する（1項目に複数枚あり得る）
+  const linkLines = [];
   const files = [];
-  if (navigator.canShare) {
-    (r.items || []).forEach(it => {
-      if (it.photo) {
-        const f = Util.dataUrlToFile(it.photo, `${r.machineName}_${it.name}.jpg`);
+  (r.items || []).forEach(it => {
+    const photos = Util.photosOf(it).concat(Util.resolvedPhotosOf(it));
+    photos.forEach((p, k) => {
+      const label = photos.length > 1 ? `${it.name}（${k + 1}）` : it.name;
+      if (Util.photoLink(p)) linkLines.push(`・${label}：${Util.photoLink(p)}`);
+      else if (p.photo && navigator.canShare) {
+        const f = Util.dataUrlToFile(p.photo, `${r.machineName}_${label}.jpg`);
         if (f) files.push(f);
       }
     });
-  }
+  });
+  if (linkLines.length) lines.push('', '■ 写真', ...linkLines);
+  const text = lines.join('\n');
   if (files.length && navigator.canShare({ files })) return doShare({ text, files });
   return doShare({ title: '点検報告', text });
 }
@@ -808,15 +831,10 @@ function renderTodo() {
     const done = !!it.resolved;
     const j = shownJudge(it);
     const thumbs = [];
-    if (Util.hasPhoto(it)) {
-      thumbs.push(`<button class="pthumb" data-photo-rid="${r.id}" data-photo-i="${idx}" data-kind="item">
-        <img src="${Util.photoSrc(it)}" alt="点検時の写真" loading="lazy"><span class="pbadge">点検時</span></button>`);
-    }
-    const rp = Util.resolvedPhotoOf(it);
-    if (Util.hasPhoto(rp)) {
-      thumbs.push(`<button class="pthumb" data-photo-rid="${r.id}" data-photo-i="${idx}" data-kind="resolved">
-        <img src="${Util.photoSrc(rp)}" alt="対応後の写真" loading="lazy"><span class="pbadge ok">対応後</span></button>`);
-    }
+    Util.photosOf(it).forEach((p, k) =>
+      thumbs.push(photoThumb(r.id, idx, k, 'item', p, '点検時の写真', '<span class="pbadge">点検時</span>')));
+    Util.resolvedPhotosOf(it).forEach((p, k) =>
+      thumbs.push(photoThumb(r.id, idx, k, 'resolved', p, '対応後の写真', '<span class="pbadge ok">対応後</span>')));
     const doneInfo = done ? `
       <div class="doneblock">
         <div class="doneinfo">✔ 対応完了　${esc(it.resolvedAt ? Util.fmtDate(it.resolvedAt) : '')}${it.resolvedBy ? '　' + esc(it.resolvedBy) : ''}</div>
@@ -863,14 +881,14 @@ function renderTodo() {
 
 /* ---- 対応完了の記録 ---- */
 let doneTarget = null;      // { rid, idx }
-let donePhoto = '';         // 対応後の写真（DataURL）
+let donePhotos = [];        // 対応後の写真（複数枚）
 
 function openDoneDialog(rid, idx) {
   const rec = Store.get(rid);
   if (!rec || !rec.items[idx]) return;
   const it = rec.items[idx];
   doneTarget = { rid, idx };
-  donePhoto = '';
+  donePhotos = Util.resolvedPhotosOf(it).map(p => Object.assign({}, p));
   $('#doneTarget').textContent =
     `${rec.machineName}${rec.unit ? ' ' + rec.unit : ''}　${it.name}（${JUDGE[it.judge].label}）`;
   $('#doneDate').value = Util.today();
@@ -883,31 +901,21 @@ function openDoneDialog(rid, idx) {
 function closeDoneDialog() {
   $('#doneDialog').classList.add('hidden');
   doneTarget = null;
-  donePhoto = '';
+  donePhotos = [];
 }
 function renderDonePhoto() {
-  $('#donePhotoThumb').innerHTML = donePhoto
-    ? `<div class="thumb"><img src="${donePhoto}" alt="対応後の写真"><button id="doneDelPhoto">×</button></div>` : '';
-  if (donePhoto) $('#doneDelPhoto').addEventListener('click', () => { donePhoto = ''; renderDonePhoto(); });
+  $('#donePhotoThumb').innerHTML = editThumbs(donePhotos, 'data-donedel');
+  $$('#donePhotoThumb [data-donedel]').forEach(b => b.addEventListener('click', () => {
+    donePhotos.splice(+b.dataset.donedel, 1);
+    renderDonePhoto();
+  }));
+  $('#donePhotoBtn').textContent = donePhotos.length ? `📷 写真を追加（${donePhotos.length}枚）` : '📷 写真を撮影・選択';
 }
-async function pickDonePhoto() {
-  const inp = document.createElement('input');
-  inp.type = 'file';
-  inp.accept = 'image/*';
-  // capture指定は付けない：付けるとカメラが強制起動し、写真ライブラリから選べない端末があるため
-  inp.onchange = async () => {
-    if (!inp.files || !inp.files[0]) return;
-    busy(true, '画像を処理中…');
-    try {
-      donePhoto = await Util.compressImage(inp.files[0]);
-      renderDonePhoto();
-    } catch (e) {
-      toast('画像を読み込めませんでした', true);
-    } finally {
-      busy(false);
-    }
-  };
-  inp.click();
+function pickDonePhoto() {
+  pickImages(urls => {
+    donePhotos = donePhotos.concat(urls.map(u => ({ photo: u, photoUrl: '', photoId: '' })));
+    renderDonePhoto();
+  });
 }
 
 /* 入力内容を記録に反映する。スプレッドシートへ送るため未送信に戻す */
@@ -924,7 +932,7 @@ function submitDone() {
   it.resolvedBy = $('#donePerson').value.trim();
   it.resolvedCause = cause;
   it.resolvedNote = note;
-  if (donePhoto) { it.resolvedPhoto = donePhoto; it.resolvedPhotoUrl = ''; it.resolvedPhotoId = ''; }
+  Util.setResolvedPhotos(it, donePhotos);
 
   // 対応完了時は自動的に「良」へ変更する。
   // 未対応へ戻した際に復元できるよう、変更前の判定を必ず保存する。
@@ -933,7 +941,11 @@ function submitDone() {
   rec.status = Util.statusOf(rec);                        // 総合判定を再計算
 
   rec.synced = false;
-  Store.upsert(rec);
+  try {
+    Store.upsert(rec);
+  } catch (e) {
+    return toast('端末の保存容量が足りません。⇅ボタンで未送信の記録を送信してから、もう一度記録してください', true);
+  }
   closeDoneDialog();
   updatePendingBadge();
   updateTodoBadge();
@@ -954,9 +966,7 @@ function unresolveItem(rid, idx) {
   it.resolvedBy = '';
   it.resolvedCause = '';
   it.resolvedNote = '';
-  it.resolvedPhoto = '';
-  it.resolvedPhotoUrl = '';
-  it.resolvedPhotoId = '';
+  Util.setResolvedPhotos(it, []);
   rec.status = Util.statusOf(rec);
   rec.synced = false;
   Store.upsert(rec);
@@ -1156,9 +1166,9 @@ function renderDash() {
   const issues = ngItems.concat(caItems);
   $('#dashIssues').innerHTML = issues.length ? issues.map(({ r, i }) => {
     const idx = r.items.indexOf(i);
-    const photo = Util.hasPhoto(i)
-      ? `<div class="photos"><button class="pthumb" data-photo-rid="${r.id}" data-photo-i="${idx}">
-           <img src="${Util.photoSrc(i)}" alt="${esc(i.name)}" loading="lazy"></button></div>` : '';
+    const ps = Util.photosOf(i);
+    const photo = ps.length
+      ? '<div class="photos">' + ps.map((p, k) => photoThumb(r.id, idx, k, 'item', p, i.name, '')).join('') + '</div>' : '';
     return `<div class="rec">
       <div class="stat ${JUDGE[i.judge].cls}">${JUDGE[i.judge].label[0]}</div>
       <div class="body">

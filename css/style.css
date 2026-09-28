@@ -135,6 +135,13 @@ select{appearance:none;background-image:linear-gradient(45deg,transparent 50%,va
 .thumb{margin-top:8px;position:relative;display:inline-block}
 .thumb img{max-width:120px;border-radius:8px;display:block}
 .thumb button{position:absolute;top:-6px;right:-6px;width:24px;height:24px;border-radius:50%;border:0;background:var(--ng);color:#fff;font-size:14px}
+/* 写真を複数枚並べる */
+.thumbs{display:flex;flex-wrap:wrap;gap:10px;margin-top:8px}
+.thumbs .thumb{margin-top:0}
+.thumbs .thumb img{width:84px;height:84px;object-fit:cover}
+.photobtn{position:relative}
+.pcount{position:absolute;top:-6px;right:-6px;min-width:18px;height:18px;padding:0 4px;border-radius:9px;
+  background:var(--blue);color:#fff;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center}
 .item.ng{border-left:5px solid var(--ng)}
 .item.caution{border-left:5px solid var(--caution)}
 .item.ok{border-left:5px solid var(--ok)}

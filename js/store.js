@@ -187,11 +187,11 @@ const Store = {
             const it = list[i].items[p.index];
             if (!it) return;
             // ドライブに保存できたら端末側の画像は破棄して容量を節約する
-            if (p.kind === 'resolved') {
-              it.resolvedPhotoUrl = p.url; it.resolvedPhotoId = p.id || ''; it.resolvedPhoto = '';
-            } else {
-              it.photoUrl = p.url; it.photoId = p.id || ''; it.photo = '';
-            }
+            const resolved = p.kind === 'resolved';
+            const photos = resolved ? this.resolvedPhotosOfRaw(it) : this.photosOfRaw(it);
+            const ph = photos[p.slot || 0];
+            if (ph) { ph.photoUrl = p.url; ph.photoId = p.id || ''; ph.photo = ''; }
+            if (resolved) Util.setResolvedPhotos(it, photos); else Util.setPhotos(it, photos);
           });
         }
         this.writeAll(list);
@@ -199,6 +199,17 @@ const Store = {
       sent++;
     }
     return { sent, targets, masterSent };
+  },
+
+  // 送信結果の「何枚目か」とずれないよう、写真一覧をそのままの並びで取り出す
+  photosOfRaw(it) {
+    if (Array.isArray(it.photos)) return it.photos;
+    return (it.photo || it.photoUrl) ? [{ photo: it.photo || '', photoUrl: it.photoUrl || '', photoId: it.photoId || '' }] : [];
+  },
+  resolvedPhotosOfRaw(it) {
+    if (Array.isArray(it.resolvedPhotos)) return it.resolvedPhotos;
+    return (it.resolvedPhoto || it.resolvedPhotoUrl)
+      ? [{ photo: it.resolvedPhoto || '', photoUrl: it.resolvedPhotoUrl || '', photoId: it.resolvedPhotoId || '' }] : [];
   },
 
   // GASへPOSTする。text/plain にすると CORS プリフライトを回避できる（GAS 側で JSON.parse）。
@@ -295,30 +306,45 @@ const Util = {
       reader.readAsDataURL(file);
     });
   },
-  /* ---------- 写真の表示・共有 ---------- */
-  hasPhoto(it) { return !!(it && (it.photo || it.photoUrl)); },
+  /* ---------- 写真の表示・共有 ----------
+     写真は1項目に複数枚持てる（it.photos / it.resolvedPhotos の配列。
+     1枚は { photo: 端末内の画像, photoUrl: ドライブのURL, photoId }）。
+     以前の1枚だけの形式（it.photo / it.photoUrl）も一覧として読めるようにする。 */
+  photosOf(it) {
+    if (!it) return [];
+    if (Array.isArray(it.photos)) return it.photos.filter(p => p && (p.photo || p.photoUrl));
+    return (it.photo || it.photoUrl) ? [{ photo: it.photo || '', photoUrl: it.photoUrl || '', photoId: it.photoId || '' }] : [];
+  },
+  resolvedPhotosOf(it) {
+    if (!it) return [];
+    if (Array.isArray(it.resolvedPhotos)) return it.resolvedPhotos.filter(p => p && (p.photo || p.photoUrl));
+    return (it.resolvedPhoto || it.resolvedPhotoUrl)
+      ? [{ photo: it.resolvedPhoto || '', photoUrl: it.resolvedPhotoUrl || '', photoId: it.resolvedPhotoId || '' }] : [];
+  },
+  // 写真一覧を保存する（以前の1枚形式の欄は空にする）
+  setPhotos(it, list) {
+    it.photos = list;
+    it.photo = ''; it.photoUrl = ''; it.photoId = '';
+  },
+  setResolvedPhotos(it, list) {
+    it.resolvedPhotos = list;
+    it.resolvedPhoto = ''; it.resolvedPhotoUrl = ''; it.resolvedPhotoId = '';
+  },
+  hasPhoto(it) { return this.photosOf(it).length > 0; },
   // ドライブのファイルIDを取り出す（URLからも復元できるようにする）
-  photoId(it) {
-    if (it.photoId) return it.photoId;
-    const m = /\/d\/([^/?]+)/.exec(it.photoUrl || '');
+  photoId(p) {
+    if (p.photoId) return p.photoId;
+    const m = /\/d\/([^/?]+)/.exec(p.photoUrl || '');
     return m ? m[1] : '';
   },
-  // 一覧に並べる縮小画像。未送信なら端末内の画像、送信済みならドライブの縮小版
-  photoSrc(it) {
-    if (it.photo) return it.photo;
-    const id = this.photoId(it);
+  // 一覧に並べる縮小画像（写真1枚分）。未送信なら端末内の画像、送信済みならドライブの縮小版
+  photoSrc(p) {
+    if (p.photo) return p.photo;
+    const id = this.photoId(p);
     return id ? 'https://drive.google.com/thumbnail?id=' + id + '&sz=w600' : '';
   },
-  // 共有・拡大表示に使うリンク（送信後のみ）
-  photoLink(it) { return it.photoUrl || ''; },
-  // 対応後の写真を、点検写真と同じ形で扱えるようにする
-  resolvedPhotoOf(it) {
-    return {
-      photo: it.resolvedPhoto || '',
-      photoId: it.resolvedPhotoId || '',
-      photoUrl: it.resolvedPhotoUrl || ''
-    };
-  },
+  // 共有・拡大表示に使うリンク（写真1枚分、送信後のみ）
+  photoLink(p) { return p.photoUrl || ''; },
   // 端末内の画像を共有用のファイルに変換する
   dataUrlToFile(dataUrl, name) {
     try {

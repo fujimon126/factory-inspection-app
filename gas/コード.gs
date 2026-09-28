@@ -537,24 +537,13 @@ function saveRecord_(rec, refresh) {
   }
 
   // 写真をドライブへ保存し、URLに置換
+  // 写真は1項目に複数枚。未保存(data:image)のものだけドライブへ保存し、URLに置き換える。
   var photoUrls = [];
   items.forEach(function (it, idx) {
-    // 点検時の写真
-    if (it.photo && String(it.photo).indexOf('data:image') === 0) {
-      var p = savePhoto_(it.photo, [rec.date, rec.site, rec.machineName, it.name, idx].join('_'));
-      it.photoUrl = p.url;
-      it.photoId = p.id;
-      it.photo = '';
-      photoUrls.push({ index: idx, url: p.url, id: p.id, kind: 'item' });
-    }
-    // 対応完了時の写真
-    if (it.resolvedPhoto && String(it.resolvedPhoto).indexOf('data:image') === 0) {
-      var p2 = savePhoto_(it.resolvedPhoto, [rec.date, rec.site, rec.machineName, it.name, idx, '対応後'].join('_'));
-      it.resolvedPhotoUrl = p2.url;
-      it.resolvedPhotoId = p2.id;
-      it.resolvedPhoto = '';
-      photoUrls.push({ index: idx, url: p2.url, id: p2.id, kind: 'resolved' });
-    }
+    it._photoUrls = savePhotoList_(photosOf_(it, ''), [rec.date, rec.site, rec.machineName, it.name, idx],
+      function (slot, p) { photoUrls.push({ index: idx, slot: slot, url: p.url, id: p.id, kind: 'item' }); });
+    it._resolvedUrls = savePhotoList_(photosOf_(it, 'resolved'), [rec.date, rec.site, rec.machineName, it.name, idx, '対応後'],
+      function (slot, p) { photoUrls.push({ index: idx, slot: slot, url: p.url, id: p.id, kind: 'resolved' }); });
   });
 
   var counts = { NG: 0, CAUTION: 0, NONE: 0 };
@@ -584,9 +573,9 @@ function saveRecord_(rec, refresh) {
       var dosing = dosingInfo_(it);
       return [rec.id, toDate_(rec.date), ym, rec.site, rec.machineName, rec.unit || '', rec.inspector || '',
         i + 1, it.name, JUDGE_LABEL[it.judge] || '未判定', it.value === '' ? '' : it.value,
-        it.unit || '', it.note || '', it.photoUrl || '', now,
+        it.unit || '', it.note || '', it._photoUrls.join('\n'), now,
         state, it.resolvedAt ? toDate_(it.resolvedAt) : '', it.resolvedBy || '',
-        it.resolvedNote || '', it.resolvedPhotoUrl || '',
+        it.resolvedNote || '', it._resolvedUrls.join('\n'),
         it.originalJudge ? (JUDGE_LABEL[it.originalJudge] || '') : '', it.resolvedCause || '',
         dosing.machine, dosing.port, dosing.chemical];
     });
@@ -644,6 +633,37 @@ function deleteDetail_(sh, id) {
   for (var b = blocks.length - 1; b >= 0; b--) sh.deleteRows(blocks[b][0], blocks[b][1]);
 }
 
+/* 項目の写真一覧を取り出す（kind: '' = 点検時, 'resolved' = 対応後）。
+   以前の1枚だけの形式（photo / photoUrl）にも対応する。 */
+function photosOf_(it, kind) {
+  var list = kind === 'resolved' ? it.resolvedPhotos : it.photos;
+  if (Array.isArray(list)) return list;
+  var single = kind === 'resolved'
+    ? { photo: it.resolvedPhoto, photoUrl: it.resolvedPhotoUrl }
+    : { photo: it.photo, photoUrl: it.photoUrl };
+  return (single.photo || single.photoUrl) ? [single] : [];
+}
+/* 写真一覧のうち未保存のものをドライブへ保存し、URLの配列を返す */
+function savePhotoList_(list, nameParts, onSaved) {
+  var urls = [];
+  list.forEach(function (ph, slot) {
+    if (!ph) return;
+    if (ph.photo && String(ph.photo).indexOf('data:image') === 0) {
+      var p = savePhoto_(ph.photo, nameParts.concat([slot + 1]).join('_'));
+      urls.push(p.url);
+      onSaved(slot, p);
+    } else if (ph.photoUrl) {
+      urls.push(ph.photoUrl);
+    }
+  });
+  return urls;
+}
+/* シートの写真列（改行区切りのURL）を写真一覧に戻す */
+function urlsToPhotos_(cell) {
+  return String(cell || '').split(/\r?\n/).filter(function (u) { return u.trim(); })
+    .map(function (u) { return { photo: '', photoUrl: u.trim() }; });
+}
+
 function savePhoto_(dataUrl, name) {
   var parts = dataUrl.split(',');
   var bytes = Utilities.base64Decode(parts[1]);
@@ -692,12 +712,12 @@ function listRecords_(ym) {
     (byId[d[0]] = byId[d[0]] || []).push({
       name: d[8], type: d[11] ? 'num' : 'judge', unit: d[11] || '',
       judge: labelToKey_(d[9]), value: d[10] === '' ? '' : String(d[10]),
-      note: d[12] || '', photo: '', photoUrl: d[13] || '',
+      note: d[12] || '', photos: urlsToPhotos_(d[13]),
       resolved: d[15] === '完了',
       resolvedAt: d[16] ? fmtDate_(d[16]) : '',
       resolvedBy: d[17] || '',
       resolvedNote: d[18] || '',
-      resolvedPhoto: '', resolvedPhotoUrl: d[19] || '',
+      resolvedPhotos: urlsToPhotos_(d[19]),
       originalJudge: labelToKey_(d[20]),
       resolvedCause: d[21] || '',
       dosingMachine: d[22] || '', dosingPort: d[23] || '', chemical: d[24] || ''
