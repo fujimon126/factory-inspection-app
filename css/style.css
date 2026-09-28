@@ -213,6 +213,8 @@ select{appearance:none;background-image:linear-gradient(45deg,transparent 50%,va
 .matrix td.none{background:#fff;color:#c8d2dc}
 .matrix td.off{background:#f2f4f7;color:#c8d2dc}
 .matrix td.pending{background:#eef2f6;color:#6b7b8c;font-weight:800}
+.movebox summary{font-size:14px;font-weight:700;color:var(--blue);cursor:pointer}
+.movebox[open] summary{margin-bottom:8px}
 
 /* ---- トースト / オーバーレイ ---- */
 .toast{
