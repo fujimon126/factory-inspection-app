@@ -467,13 +467,59 @@ function getSheet_(ss, name, head) {
 }
 
 /* ============ 受信（アプリ → シート） ============ */
+/* ============ 共有と権限 ============
+   オーナー鍵：点検記録の保存・設定の同期・共有設定ができる（アプリの持ち主）
+   共有鍵　　：閲覧と「要対応」の操作（対応完了・未対応に戻す）だけができる（共有された人）
+   鍵はスクリプトプロパティに保存する。共有を開始するまで（オーナー鍵が未設定の間）は従来どおり誰でも操作できる。 */
+function keys_() {
+  var p = PropertiesService.getScriptProperties();
+  return { owner: p.getProperty('OWNER_KEY') || '', share: p.getProperty('SHARE_KEY') || '' };
+}
+function isOwner_(key) {
+  var k = keys_();
+  return !k.owner || key === k.owner;
+}
+function canView_(key) {
+  var k = keys_();
+  return !k.owner || key === k.owner || (!!k.share && key === k.share);
+}
+var DENIED = { ok: false, denied: true, error: 'この操作の権限がありません（共有リンクでは要対応の操作のみ行えます）' };
+
+/* 共有を開始する／共有リンクの鍵を作り直す（オーナーのみ）。
+   初回はアプリが作ったオーナー鍵を登録し、共有鍵を発行する。 */
+function setupShare_(body) {
+  var p = PropertiesService.getScriptProperties();
+  var k = keys_();
+  var ownerKey = String(body.ownerKey || '');
+  if (ownerKey.length < 20) return { ok: false, error: 'オーナー鍵が不正です' };
+  if (k.owner && ownerKey !== k.owner) return DENIED;
+  if (!k.owner) p.setProperty('OWNER_KEY', ownerKey);
+  var share = k.share;
+  if (!share || body.regenerate) {
+    share = Utilities.getUuid().replace(/-/g, '') + Utilities.getUuid().replace(/-/g, '');
+    p.setProperty('SHARE_KEY', share);
+  }
+  return { ok: true, shareKey: share };
+}
+
+/* 共有をやめる／オーナー鍵を失くした場合に、Apps Script の画面から手動で実行する。
+   鍵をすべて削除し、共有リンクは使えなくなる（従来どおり誰でも操作できる状態に戻る）。 */
+function 共有をリセット() {
+  var p = PropertiesService.getScriptProperties();
+  p.deleteProperty('OWNER_KEY');
+  p.deleteProperty('SHARE_KEY');
+  Logger.log('共有をリセットしました。アプリの設定タブから、もう一度「共有を開始」してください。');
+}
+
 function doPost(e) {
   var lock = LockService.getScriptLock();
   try {
     lock.waitLock(120000);
     var body = JSON.parse(e.postData.contents);
-    if (body.action === 'syncMaster') return json_(syncTargetMaster_(body.master));
-    if (body.action === 'save') return json_(saveRecord_(body.record, body.refresh !== false));
+    if (body.action === 'setupShare') return json_(setupShare_(body));
+    if (body.action === 'syncMaster') return json_(isOwner_(body.key) ? syncTargetMaster_(body.master) : DENIED);
+    if (body.action === 'save') return json_(isOwner_(body.key) ? saveRecord_(body.record, body.refresh !== false) : DENIED);
+    if (body.action === 'resolve') return json_(canView_(body.key) ? resolveItems_(body) : DENIED);
     return json_({ ok: false, error: '不明なアクションです' });
   } catch (err) {
     return json_({ ok: false, error: String(err) });
@@ -511,6 +557,33 @@ function syncTargetMaster_(master) {
   return { ok: true, targets: rows.length };
 }
 
+/* シート上で「完了」になっている項目の対応内容を、送られてきた項目に引き継ぐ。
+   引き継いだ項目の数を返す。 */
+function keepSheetResolutions_(detSh, recordId, items) {
+  var last = detSh.getLastRow();
+  if (last < 2) return 0;
+  var rows = detSh.getRange(2, 1, last - 1, DET_HEAD.length).getValues()
+    .filter(function (r) { return String(r[0]) === String(recordId) && String(r[15]) === '完了'; });
+  var kept = 0;
+  items.forEach(function (it, i) {
+    if (it.resolved) return;
+    var row = rows.filter(function (r) { return Number(r[7]) === i + 1 && String(r[8]) === String(it.name); })[0];
+    if (!row) return;
+    var sheetUpdated = row[14] instanceof Date ? row[14] : new Date(row[14]);
+    if (it.unresolvedAt && new Date(it.unresolvedAt) > sheetUpdated) return;   // オーナーが後から未対応に戻した
+    it.resolved = true;
+    it.judge = labelToKey_(row[9]) || 'OK';
+    it.resolvedAt = fmtDate_(row[16]);
+    it.resolvedBy = row[17] || '';
+    it.resolvedNote = row[18] || '';
+    it.resolvedPhotos = urlsToPhotos_(row[19]);
+    it.originalJudge = labelToKey_(row[20]);
+    it.resolvedCause = row[21] || '';
+    kept++;
+  });
+  return kept;
+}
+
 function saveRecord_(rec, refresh) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var recSh = getSheet_(ss, SH_REC, REC_HEAD);
@@ -529,7 +602,10 @@ function saveRecord_(rec, refresh) {
     var n = Number(it.value);
     it.judge = n < 300 ? 'NG' : (n < 350 ? 'CAUTION' : 'OK');
   });
-  if (rec.machineName === '投入機') {
+  // 共有された人がシート上で「対応完了」にした項目を、オーナー端末の古い内容で上書きしない。
+  // オーナーが明示的に「未対応に戻す」を行った場合（unresolvedAt がシートの更新より新しい）だけ解除する。
+  var kept = keepSheetResolutions_(detSh, rec.id, items);
+  if (rec.machineName === '投入機' || kept) {
     var itemJudges = items.map(function (it) { return it.judge; });
     rec.status = itemJudges.indexOf('NG') >= 0 ? 'NG' :
       (itemJudges.indexOf('CAUTION') >= 0 ? 'CAUTION' :
@@ -596,7 +672,7 @@ function saveRecord_(rec, refresh) {
     dosingSh.getRange(dosingSh.getLastRow() + 1, 1, dosingRows.length, DOSING_HEAD.length).setValues(dosingRows);
   }
   if (refresh !== false) refreshDashboard_(ss);
-  return { ok: true, id: rec.id, photoUrls: photoUrls };
+  return { ok: true, id: rec.id, photoUrls: photoUrls, kept: kept, updatedAt: now.toISOString() };
 }
 
 /* 投入機の工場別測定項目を列に分けて保存する。
@@ -689,7 +765,10 @@ function doGet(e) {
     if (p.action === 'ping') {
       return json_({ ok: true, sheetName: SpreadsheetApp.getActiveSpreadsheet().getName() });
     }
-    if (p.action === 'list') return json_({ ok: true, records: listRecords_(p.ym) });
+    if (p.action === 'list') {
+      if (!canView_(p.key)) return json_(DENIED);
+      return json_({ ok: true, records: listRecords_(p.ym), master: readTargetMaster_() });
+    }
     return json_({ ok: false, error: '不明なアクションです' });
   } catch (err) {
     return json_({ ok: false, error: String(err) });
@@ -706,10 +785,17 @@ function listRecords_(ym) {
   var dets = detSh.getLastRow() > 1
     ? detSh.getRange(2, 1, detSh.getLastRow() - 1, DET_HEAD.length).getValues() : [];
 
+  // 機械名→機械ID（アプリで追加した機械も正しく対応付けるため、点検対象マスタを優先する）
+  var machineIdByName = {};
+  readTargetMaster_().machines.forEach(function (m) { machineIdByName[m.name] = m.id; });
+
   var byId = {};
   dets.forEach(function (d) {
     if (ym && ymOf_(d[1]) !== ym) return;   // 点検日から年月を判定する
     (byId[d[0]] = byId[d[0]] || []).push({
+      no: Number(d[7]) || 0,
+      // 「備考」「点検済み」はアプリ側で特別に扱う項目なので目印を復元する
+      isNote: d[8] === '備考', isCompletion: d[8] === '点検済み',
       name: d[8], type: d[11] ? 'num' : 'judge', unit: d[11] || '',
       judge: labelToKey_(d[9]), value: d[10] === '' ? '' : String(d[10]),
       note: d[12] || '', photos: urlsToPhotos_(d[13]),
@@ -728,15 +814,97 @@ function listRecords_(ym) {
     return {
       id: String(r[0]),
       date: fmtDate_(r[1]),
-      site: r[3], machineId: machineIdOf_(r[4]), machineName: r[4],
+      site: r[3], machineId: machineIdByName[r[4]] || machineIdOf_(r[4]), machineName: r[4],
       unit: r[5], inspector: r[6],
       status: labelToKey_(r[7]),
-      items: byId[r[0]] || [],
+      items: (byId[r[0]] || []).sort(function (a, b) { return a.no - b.no; }),
       note: r[11],
       createdAt: r[12] ? new Date(r[12]).toISOString() : '',
       updatedAt: r[13] ? new Date(r[13]).toISOString() : ''
     };
   });
+}
+
+/* 点検対象マスタ（工場・機械・対象の組み合わせ）を読み出す。共有された人のアプリで使う */
+function readTargetMaster_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sh = ss.getSheetByName(SH_TARGET);
+  var out = { sites: [], machines: [], targets: {} };
+  if (!sh || sh.getLastRow() < 2) return out;
+  var rows = sh.getRange(2, 1, sh.getLastRow() - 1, TARGET_HEAD.length).getValues();
+  var seenS = {}, seenM = {};
+  rows.forEach(function (r) {
+    var sid = String(r[0] || ''), mid = String(r[2] || '');
+    if (!sid || !mid) return;
+    if (!seenS[sid]) { seenS[sid] = true; out.sites.push({ id: sid, name: String(r[1] || '') }); }
+    if (!seenM[mid]) { seenM[mid] = true; out.machines.push({ id: mid, name: String(r[3] || '') }); }
+    if (r[4] === true || String(r[4]).toUpperCase() === 'TRUE' || r[4] === 1) {
+      (out.targets[sid] = out.targets[sid] || []).push(mid);
+    }
+  });
+  return out;
+}
+
+/* 要対応の操作（対応完了・未対応に戻す）だけを反映する。共有された人も実行できる。
+   点検記録のほかの内容（判定・所見・測定値など）は変更しない。 */
+function resolveItems_(body) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var recSh = getSheet_(ss, SH_REC, REC_HEAD);
+  var detSh = getSheet_(ss, SH_DET, DET_HEAD);
+  var rid = String(body.recordId || '');
+  var recRow = findRow_(recSh, rid);
+  if (recRow < 0) return { ok: false, error: '対象の点検記録がスプレッドシートにありません' };
+  var recInfo = recSh.getRange(recRow, 1, 1, REC_HEAD.length).getValues()[0];
+  var last = detSh.getLastRow();
+  var rows = last > 1 ? detSh.getRange(2, 1, last - 1, DET_HEAD.length).getValues() : [];
+  var now = new Date();
+  var photoUrls = [];
+  var applied = 0;
+
+  (body.items || []).forEach(function (it) {
+    var rowIdx = -1;
+    for (var i = 0; i < rows.length; i++) {
+      if (String(rows[i][0]) === rid && Number(rows[i][7]) === Number(it.no) && String(rows[i][8]) === String(it.name)) {
+        rowIdx = i; break;
+      }
+    }
+    if (rowIdx < 0) return;
+    var row = rows[rowIdx];
+    if (it.resolved) {
+      var urls = savePhotoList_(photosOf_(it, 'resolved'),
+        [fmtDate_(recInfo[1]), recInfo[3], recInfo[4], it.name, Number(it.no) - 1, '対応後'],
+        function (slot, p) { photoUrls.push({ index: it.index, slot: slot, url: p.url, id: p.id, kind: 'resolved' }); });
+      if (!row[20]) row[20] = row[9];            // 当初判定（最初の判定を残す）
+      row[9] = '良';                              // 対応完了で判定は「良」
+      row[15] = '完了';
+      row[16] = it.resolvedAt ? toDate_(it.resolvedAt) : now;
+      row[17] = it.resolvedBy || '';
+      row[18] = it.resolvedNote || '';
+      row[19] = urls.join('\n');
+      row[21] = it.resolvedCause || '';
+    } else {
+      var back = row[20] ? String(row[20]) : String(row[9]);   // 当初判定に戻す
+      row[9] = back;
+      row[15] = (back === '不良' || back === '要注意') ? '未対応' : '';
+      row[16] = ''; row[17] = ''; row[18] = ''; row[19] = ''; row[20] = ''; row[21] = '';
+    }
+    row[14] = now;
+    detSh.getRange(rowIdx + 2, 1, 1, DET_HEAD.length).setValues([row]);
+    applied++;
+  });
+  if (!applied) return { ok: false, error: '対象の点検項目がスプレッドシートで見つかりません' };
+
+  // 点検記録の総合判定・件数・更新日時を明細から計算し直す
+  var judges = rows.filter(function (r) { return String(r[0]) === rid; }).map(function (r) { return String(r[9]); });
+  var countOf = function (label) { return judges.filter(function (j) { return j === label; }).length; };
+  recInfo[7] = countOf('不良') ? '不良' : countOf('要注意') ? '要注意' : countOf('良') ? '良' : '対象外';
+  recInfo[8] = countOf('不良');
+  recInfo[9] = countOf('要注意');
+  recInfo[10] = countOf('未判定');
+  recInfo[13] = now;
+  recSh.getRange(recRow, 1, 1, REC_HEAD.length).setValues([recInfo]);
+  refreshDashboard_(ss);
+  return { ok: true, photoUrls: photoUrls, updatedAt: now.toISOString() };
 }
 
 function labelToKey_(label) {

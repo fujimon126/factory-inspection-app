@@ -18,6 +18,7 @@
 <header class="appbar">
   <button id="btnBack" class="iconbtn hidden" aria-label="戻る">←</button>
   <h1 id="appTitle">工場点検</h1>
+  <span class="vbadge viewer-only" title="共有リンクで開いています">閲覧モード</span>
   <span id="netBadge" class="badge" title="通信状態">●</span>
   <button id="btnSync" class="iconbtn" aria-label="スプレッドシートへ同期">⇅<span id="pendingDot" class="dot hidden"></span></button>
 </header>
@@ -35,12 +36,13 @@
         <label for="inpSite">② 点検場所</label>
         <select id="inpSite"></select>
       </div>
-      <div class="field">
+      <div class="field owner-only">
         <label for="inpInspector">点検者</label>
         <input type="text" id="inpInspector" placeholder="氏名" autocomplete="name">
       </div>
     </div>
 
+    <p class="hint viewer-only">閲覧モードです。点検済みの機械をタップすると記録を見られます。</p>
     <h2 class="sect">③ 点検機械を選択</h2>
     <p class="hint" id="dayHint"></p>
     <div id="machineGrid" class="grid"></div>
@@ -62,7 +64,7 @@
         <label for="inpUnit">号機・設備No.</label>
         <input type="text" id="inpUnit" placeholder="例）1号機（任意）">
       </div>
-      <div class="bulkrow">
+      <div class="bulkrow owner-only">
         <button class="btn ghost sm" data-bulk="OK">すべて「良」</button>
         <button class="btn ghost sm" data-bulk="NA">すべて「対象外」</button>
         <button class="btn ghost sm" data-bulk="CLEAR">クリア</button>
@@ -87,16 +89,17 @@
         </div>
         <p class="hint" style="margin:6px 2px 0">要注意・不良を選ぶと要対応リストに追加されます。もう一度タップで選択解除。</p>
       </div>
-      <div class="subrow">
+      <div class="subrow owner-only">
         <button id="notePhotoBtn" class="btn ghost sm" style="flex:1">📷 備考に写真を添付</button>
       </div>
       <div id="notePhotoThumb"></div>
     </div>
 
-    <div class="actionbar">
+    <div class="actionbar owner-only">
       <button id="btnDelete" class="btn danger ghost hidden">削除</button>
       <button id="btnSave" class="btn primary">保存する</button>
     </div>
+    <p class="hint viewer-only" style="text-align:center">閲覧モードのため、点検記録は変更できません。</p>
   </section>
 
   <!-- ========== 要対応リスト ========== -->
@@ -142,7 +145,7 @@
       </div>
       <button id="btnCsv" class="btn ghost sm">CSV出力</button>
     </div>
-    <details class="card movebox">
+    <details class="card movebox owner-only">
       <summary>点検場所を間違えて入力した場合（一括変更）</summary>
       <p class="hint">指定した日に、誤った場所で入力した記録をまとめて正しい場所へ移します。スプレッドシートも上書きされます。</p>
       <div class="field inline">
@@ -201,7 +204,32 @@
 
   <!-- ========== 設定 ========== -->
   <section id="view-settings" class="view hidden">
-    <div class="card">
+    <!-- 共有リンクで開いた人（閲覧モード）だけに表示 -->
+    <div class="card viewer-only">
+      <h2 class="sect first">閲覧モード</h2>
+      <p class="hint">このアプリは共有リンクで開かれています。点検の記録・履歴・進捗は見るだけで、
+        <b>要対応タブの「対応完了」「未対応に戻す」だけ</b>操作できます。</p>
+      <div class="field">
+        <label for="vwName">あなたの氏名（対応者として記録されます）</label>
+        <input type="text" id="vwName" placeholder="氏名" autocomplete="name">
+      </div>
+      <div class="actionbar inline">
+        <button id="btnVwSave" class="btn primary">氏名を保存</button>
+        <button id="btnVwPull" class="btn ghost">最新の情報を取得</button>
+      </div>
+      <p class="hint" id="vwInfo"></p>
+      <button id="btnVwExit" class="btn ghost danger sm" style="width:100%;margin-top:10px">閲覧モードを終了（この端末の表示データを消去）</button>
+    </div>
+
+    <!-- 持ち主（オーナー）だけに表示 -->
+    <div class="card owner-only">
+      <h2 class="sect first">共有（閲覧＋要対応の操作のみ）</h2>
+      <p class="hint">共有リンクを送った相手は、点検の記録・履歴・進捗を<b>見るだけ</b>で、
+        要対応タブの<b>「対応完了」「未対応に戻す」だけ</b>操作できます。点検の入力・編集・設定の変更はできません。</p>
+      <div id="shareBox"></div>
+    </div>
+
+    <div class="card owner-only">
       <h2 class="sect first">スプレッドシート連携</h2>
       <div class="field">
         <label for="setGas">GAS ウェブアプリURL</label>
@@ -219,25 +247,25 @@
       </div>
     </div>
 
-    <div class="card">
+    <div class="card owner-only">
       <h2 class="sect first">点検場所の登録</h2>
       <p class="hint">実際の工場名を入力してください。名称はこの端末内にのみ保存されます（アプリのプログラムには含まれません）。</p>
       <div id="siteEditor"></div>
     </div>
 
-    <div class="card">
+    <div class="card owner-only">
       <h2 class="sect first">点検機械・点検項目の編集</h2>
       <p class="hint">点検機械の追加・変更や、機械ごとの点検項目の追加・変更ができます。</p>
       <button id="btnOpenMaster" class="btn ghost" style="width:100%">編集画面を開く</button>
     </div>
 
-    <div class="card">
+    <div class="card owner-only">
       <h2 class="sect first">点検対象設定（進捗率の分母）</h2>
       <p class="hint">各工場に設置されている機械にチェックを入れてください。</p>
       <div id="targetEditor"></div>
     </div>
 
-    <div class="card">
+    <div class="card owner-only">
       <h2 class="sect first">データ</h2>
       <p class="hint" id="dataInfo"></p>
       <div class="actionbar inline">

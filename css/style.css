@@ -220,6 +220,19 @@ select{appearance:none;background-image:linear-gradient(45deg,transparent 50%,va
 .matrix td.none{background:#fff;color:#c8d2dc}
 .matrix td.off{background:#f2f4f7;color:#c8d2dc}
 .matrix td.pending{background:#eef2f6;color:#6b7b8c;font-weight:800}
+/* ---- 共有：閲覧モード（共有リンクで開いた人） ---- */
+body.viewer .owner-only{display:none !important}
+body:not(.viewer) .viewer-only{display:none !important}
+.vbadge{font-size:11px;font-weight:700;background:#fff3d6;color:#7a5200;border-radius:10px;padding:3px 8px;white-space:nowrap}
+/* 点検記録は読み取り専用で表示する（判定の変更・写真の追加削除をさせない） */
+body.viewer #view-form .jbtn,
+body.viewer #view-form #noteJudges .jbtn{pointer-events:none}
+body.viewer #view-form .photobtn,
+body.viewer #view-form .thumb button{display:none}
+.sharelink{width:100%;font-size:12px;padding:10px;background:#f4f7fa}
+.shareacts{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap}
+.shareacts .btn{flex:1 1 auto}
+
 .movebox summary{font-size:14px;font-weight:700;color:var(--blue);cursor:pointer}
 .movebox[open] summary{margin-bottom:8px}
 

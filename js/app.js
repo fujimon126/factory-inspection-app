@@ -48,9 +48,10 @@ function show(view) {
   $$('.tab').forEach(b => b.classList.toggle('active', b.dataset.view === tabOf));
   $('#btnBack').classList.toggle('hidden', view !== 'form' && view !== 'master');
   $('#appTitle').textContent = {
-    inspect: '工場点検', form: '点検項目', todo: '要対応リスト', history: '点検履歴',
+    inspect: '工場点検', form: isViewer() ? '点検記録' : '点検項目', todo: '要対応リスト', history: '点検履歴',
     dash: '進捗状況', settings: '設定', master: '点検機械・項目の編集'
   }[view];
+  if (view === 'todo') ownerAutoPull();
   window.scrollTo(0, 0);
   if (view === 'inspect') renderMachineGrid();
   if (view === 'todo') renderTodo();
@@ -88,6 +89,10 @@ function siteLabel(rec) {
 
 /* ---------------- 初期化 ---------------- */
 function init() {
+  // 共有リンク／オーナー用リンクで開かれた場合は、先に設定を取り込む
+  consumeLinkHash();
+  applyRoleClass();
+
   // セレクト初期化
   renderSiteOptions();
   $('#inpDate').value = Util.today();
@@ -126,6 +131,14 @@ function init() {
   on('#dashMonth', 'change', renderDash);
   on('#btnPull', 'click', pullFromSheet);
   on('#btnSync', 'click', () => syncNow(true));
+  on('#btnVwSave', 'click', () => {
+    const name = $('#vwName').value.trim();
+    Store.saveSettings({ inspector: name });
+    $('#inpInspector').value = name;
+    toast('氏名を保存しました');
+  });
+  on('#btnVwPull', 'click', () => refreshShared(true));
+  on('#btnVwExit', 'click', exitViewer);
   on('#btnSaveSettings', 'click', saveSettings);
   on('#btnTest', 'click', testConnection);
   on('#btnExportJson', 'click', exportJson);
@@ -147,8 +160,188 @@ function init() {
   updatePendingBadge();
   updateTodoBadge();
 
+  if (Store.isViewer()) {
+    // 共有された人は要対応から始め、スプレッドシートの最新内容を取り込む
+    show('todo');
+    refreshShared(false);
+  } else {
+    ownerAutoPull();
+  }
+
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js').catch(() => { /* 未対応環境は無視 */ });
+  }
+}
+
+/* ---------------- 共有（閲覧モード） ---------------- */
+function isViewer() { return Store.isViewer(); }
+function applyRoleClass() {
+  document.body.classList.toggle('viewer', isViewer());
+}
+/* 閲覧モードでは変更操作をさせない（画面で隠したうえでの二重の防止） */
+function viewerBlocked() {
+  if (!isViewer()) return false;
+  toast('閲覧モードでは変更できません（要対応の操作のみ行えます）', true);
+  return true;
+}
+
+/* リンクに埋め込む情報（連携URLと鍵）を URL の # 以降に入れる。
+   # 以降はサーバーに送られないため、鍵が GitHub のログ等に残らない。 */
+function encodeLink(obj) {
+  return btoa(JSON.stringify(obj)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+function decodeLink(s) {
+  const b = s.replace(/-/g, '+').replace(/_/g, '/');
+  return JSON.parse(atob(b + '='.repeat((4 - b.length % 4) % 4)));
+}
+function appBaseUrl() { return location.origin + location.pathname; }
+function shareLink() {
+  const s = Store.settings();
+  return s.shareKey ? appBaseUrl() + '#share=' + encodeLink({ g: s.gasUrl, k: s.shareKey }) : '';
+}
+function ownerLink() {
+  const s = Store.settings();
+  return s.ownerKey ? appBaseUrl() + '#owner=' + encodeLink({ g: s.gasUrl, k: s.ownerKey }) : '';
+}
+
+function consumeLinkHash() {
+  const m = /^#(share|owner)=([A-Za-z0-9_-]+)$/.exec(location.hash || '');
+  if (!m) return;
+  history.replaceState(null, '', location.pathname + location.search);
+  let data;
+  try { data = decodeLink(m[2]); } catch (e) { data = null; }
+  if (!data || !data.g || !data.k) { setTimeout(() => toast('リンクが正しくありません', true), 300); return; }
+
+  if (m[1] === 'share') {
+    const s = Store.settings();
+    const unsent = Store.unsynced().length;
+    if (s.role !== 'viewer' && (Store.records().length || s.ownerKey)) {
+      if (!confirm('共有リンクを開くと、この端末は「閲覧モード」になり、点検の入力ができなくなります。' +
+        (unsent ? `\n\n※ この端末に未送信の点検記録が ${unsent} 件あります。切り替えると失われます。` : '') +
+        '\n\n閲覧モードに切り替えますか？')) return;
+    }
+    Store.writeAll([]);
+    Store.saveSettings({ role: 'viewer', gasUrl: data.g, shareKey: data.k, ownerKey: '', autoSync: true, lastMasterHash: '' });
+    setTimeout(() => toast('共有リンクを開きました（閲覧モード）'), 300);
+  } else {
+    Store.saveSettings({ role: 'owner', gasUrl: data.g, ownerKey: data.k, lastMasterHash: '' });
+    setTimeout(() => toast('この端末をオーナーとして登録しました'), 300);
+  }
+}
+
+/* 共有された人：未送信の要対応操作を送り、スプレッドシートの最新内容を取り込む */
+let sharedRefreshing = false;
+async function refreshShared(manual) {
+  if (!isViewer() || sharedRefreshing) return;
+  if (!navigator.onLine) { if (manual) toast('オフラインです', true); return; }
+  sharedRefreshing = true;
+  if (manual) busy(true, '最新の情報を取得中…');
+  try {
+    if (Store.unsynced().length) await Store.push();
+    await Store.pull('');
+    renderSiteOptions();
+    rerenderCurrent();
+    if (manual) toast('最新の情報を取得しました');
+  } catch (e) {
+    toast('取得に失敗：' + e.message, true);
+  } finally {
+    sharedRefreshing = false;
+    busy(false);
+    updatePendingBadge();
+    updateTodoBadge();
+  }
+}
+
+/* オーナー：共有中は、共有された人の「対応完了」を取り込むため裏で最新を取得する（3分に1回まで） */
+let ownerPullAt = 0;
+async function ownerAutoPull(force) {
+  const s = Store.settings();
+  if (isViewer() || !s.ownerKey || !s.gasUrl || !navigator.onLine) return;
+  if (!force && Date.now() - ownerPullAt < 180000) return;
+  ownerPullAt = Date.now();
+  try {
+    await Store.pull('');
+    updateTodoBadge();
+    if (['todo', 'history', 'dash', 'inspect'].includes(currentView)) rerenderCurrent();
+  } catch (e) { /* 裏での取得なので失敗しても表示しない */ }
+}
+
+function rerenderCurrent() {
+  if (currentView === 'inspect') renderMachineGrid();
+  if (currentView === 'todo') renderTodo();
+  if (currentView === 'history') renderHistory();
+  if (currentView === 'dash') renderDash();
+  if (currentView === 'settings') renderSettings();
+}
+
+function exitViewer() {
+  if (!confirm('閲覧モードを終了します。この端末に取り込んだ表示用のデータは消去されます（スプレッドシートのデータは消えません）。\n\nよろしいですか？')) return;
+  Store.writeAll([]);
+  ['fi_sites_v1', 'fi_machines_v1', 'fi_targets_v1'].forEach(k => localStorage.removeItem(k));
+  Store.saveSettings({ role: 'owner', gasUrl: '', shareKey: '', ownerKey: '', lastMasterHash: '' });
+  location.reload();
+}
+
+/* オーナー：共有リンクの作成・表示 */
+function renderShareBox() {
+  const s = Store.settings();
+  const box = $('#shareBox');
+  if (!s.gasUrl) {
+    box.innerHTML = '<p class="hint">先に下の「スプレッドシート連携」でURLを設定してください。</p>';
+    return;
+  }
+  if (!s.shareKey) {
+    box.innerHTML = '<button id="btnShareStart" class="btn primary" style="width:100%">共有を開始する（共有リンクを作成）</button>' +
+      '<p class="hint" style="margin-top:8px">開始すると、スプレッドシートへの書き込みにこの端末の「オーナー鍵」が必要になります。' +
+      '別の端末でも点検を入力する場合は、開始後に表示される「オーナー用リンク」をその端末で開いてください。</p>';
+    on('#btnShareStart', 'click', () => startShare(false));
+    return;
+  }
+  box.innerHTML = `
+    <label class="hint" style="margin:0 0 4px;display:block">共有リンク（相手に送ってください）</label>
+    <input type="text" class="sharelink" id="shareLinkText" readonly value="${esc(shareLink())}">
+    <div class="shareacts">
+      <button id="btnShareCopy" class="btn primary sm">コピー</button>
+      <button id="btnShareSend" class="btn ghost sm">LINE・メールで送る</button>
+    </div>
+    <details style="margin-top:12px">
+      <summary class="hint" style="cursor:pointer">共有リンクを作り直す（今のリンクを使えなくする）</summary>
+      <p class="hint">今の共有リンクは使えなくなり、共有した相手には新しいリンクを送り直す必要があります。</p>
+      <button id="btnShareRegen" class="btn ghost danger sm" style="width:100%">共有リンクを作り直す</button>
+    </details>
+    <details style="margin-top:8px">
+      <summary class="hint" style="cursor:pointer">オーナー用リンク（自分の別の端末で点検を入力する場合）</summary>
+      <p class="hint">このリンクを開いた端末は、点検の入力・編集・設定の変更ができるようになります。<b>自分以外には絶対に送らないでください。</b></p>
+      <input type="text" class="sharelink" id="ownerLinkText" readonly value="${esc(ownerLink())}">
+      <div class="shareacts"><button id="btnOwnerCopy" class="btn ghost sm">オーナー用リンクをコピー</button></div>
+    </details>`;
+  on('#btnShareCopy', 'click', () => copyText(shareLink(), '共有リンクをコピーしました'));
+  on('#btnShareSend', 'click', () => doShare({ title: '工場点検アプリ（共有）',
+    text: '工場点検アプリの共有リンクです。開くと点検の記録・進捗を見られ、要対応の「対応完了」を記録できます。\n' + shareLink() }));
+  on('#btnShareRegen', 'click', () => {
+    if (confirm('共有リンクを作り直します。今の共有リンクは使えなくなります。よろしいですか？')) startShare(true);
+  });
+  on('#btnOwnerCopy', 'click', () => copyText(ownerLink(), 'オーナー用リンクをコピーしました'));
+}
+async function startShare(regenerate) {
+  if (!navigator.onLine) return toast('オフラインです', true);
+  busy(true, regenerate ? '共有リンクを作り直しています…' : '共有を開始しています…');
+  try {
+    await Store.setupShare(regenerate);
+    toast(regenerate ? '共有リンクを作り直しました' : '共有を開始しました。共有リンクを相手に送ってください');
+    renderShareBox();
+  } catch (e) {
+    toast(e.message, true);
+  } finally {
+    busy(false);
+  }
+}
+async function copyText(text, msg) {
+  try {
+    await navigator.clipboard.writeText(text);
+    toast(msg);
+  } catch (e) {
+    toast('コピーできませんでした。リンクを長押ししてコピーしてください', true);
   }
 }
 
@@ -222,6 +415,16 @@ function worstStatus(recs) {
 function onPickMachine(mid) {
   const siteId = $('#inpSite').value;
   const exist = monthRecords(siteId, mid);
+  if (isViewer()) {
+    // 閲覧モード：記録を見るだけ（新規の点検は作れない）
+    if (!exist.length) return toast('この機械の今月の点検記録はありません');
+    if (exist.length === 1) return openForm(mid, exist[0].id);
+    const list = exist.map((r, i) => `${i + 1}. ${shortDate(r.date)} ${r.unit || '（号機未入力）'}／${JUDGE[r.status].label}`).join('\n');
+    const pick = prompt(`見る記録の番号を入力してください\n${list}`, '1');
+    const k = parseInt(pick, 10) - 1;
+    if (exist[k]) openForm(mid, exist[k].id);
+    return;
+  }
   if (exist.length === 0) return openForm(mid, null);
 
   // 今月の既存記録あり → 編集 or 新規（別号機・別日）を選択
@@ -277,7 +480,13 @@ function applyDosingJudge(it) {
 }
 
 function openForm(mid, recId) {
-  const m = Store.machineById(mid);
+  if (isViewer() && !recId) return;   // 閲覧モードでは新しい点検は作らない
+  let m = Store.machineById(mid);
+  // 閲覧モードでは、端末に機械の定義が無くても記録の内容だけで表示する
+  if (!m && isViewer() && recId) {
+    const r = Store.get(recId);
+    m = { id: mid, name: r ? r.machineName : '点検記録', icon: '🔧', items: [] };
+  }
   if (!m) return toast('この点検機械は削除されています', true);
   if (recId) {
     editing = JSON.parse(JSON.stringify(Store.get(recId)));
@@ -330,6 +539,8 @@ function openForm(mid, recId) {
   $('#btnDelete').classList.toggle('hidden', !recId);
   renderItems();
   renderNoteExtras();
+  // 閲覧モードでは入力欄をすべて読み取り専用にする
+  $$('#view-form input, #view-form select, #view-form textarea').forEach(el => { el.disabled = isViewer(); });
   show('form');
 }
 
@@ -396,11 +607,13 @@ function renderNoteExtras() {
   $('#notePhotoBtn').textContent = photos.length ? `📷 備考に写真を追加（${photos.length}枚）` : '📷 備考に写真を添付';
 }
 function setNoteJudge(j) {
+  if (viewerBlocked()) return;
   const n = noteItem();
   n.judge = n.judge === j ? '' : j;
   renderNoteExtras();
 }
 function pickNotePhoto() {
+  if (viewerBlocked()) return;
   pickImages(urls => {
     const n = noteItem();
     Util.setPhotos(n, Util.photosOf(n).concat(urls.map(u => ({ photo: u, photoUrl: '', photoId: '' }))));
@@ -410,7 +623,7 @@ function pickNotePhoto() {
 
 function renderItems() {
   const m = Store.machineById(editing.machineId) || { items: [] };
-  if (Store.isFree(m)) {
+  if (Store.isFree(m) && !realItems().length) {
     $('#itemList').innerHTML =
       `<div class="card"><p class="hint" style="margin:0">「その他」は備考欄に点検内容を記入してください。</p></div>`;
     updateFormProgress();
@@ -485,6 +698,7 @@ function itemRowClass(it) {
 }
 
 function setJudge(i, j) {
+  if (viewerBlocked()) return;
   if (isDosingMeasurement(editing.items[i])) return;
   editing.items[i].judge = editing.items[i].judge === j ? '' : j;
   const row = $(`#itemList [data-item="${i}"]`);
@@ -501,6 +715,7 @@ function setJudge(i, j) {
   }
 }
 function bulkSet(kind) {
+  if (viewerBlocked()) return;
   realItems().forEach(it => { it.judge = (kind === 'CLEAR' ? '' : kind); });
   editing.items.forEach(applyDosingJudge);
   renderItems();
@@ -515,6 +730,7 @@ function updateFormProgress() {
 }
 
 function pickPhoto(i) {
+  if (viewerBlocked()) return;
   pickImages(urls => {
     const it = editing.items[i];
     Util.setPhotos(it, Util.photosOf(it).concat(urls.map(u => ({ photo: u, photoUrl: '', photoId: '' }))));
@@ -523,6 +739,7 @@ function pickPhoto(i) {
 }
 
 async function saveRecord() {
+  if (viewerBlocked()) return;
   editing.unit = $('#inpUnit').value.trim();
   editing.note = $('#inpNote').value.trim();
   editing.inspector = $('#inpInspector').value.trim();
@@ -582,6 +799,7 @@ async function saveRecord() {
 }
 
 function deleteRecord() {
+  if (viewerBlocked()) return;
   if (!confirm('この点検記録を端末から削除します。よろしいですか？\n（スプレッドシート送信済みのデータはシート側に残ります）')) return;
   Store.remove(editing.id);
   updatePendingBadge();
@@ -602,6 +820,7 @@ async function syncNow(manual) {
     return;
   }
   if (!navigator.onLine) { if (manual) toast('オフラインです。通信可能になったら送信されます', true); return; }
+  if (isViewer()) return refreshShared(manual);
   if (syncRunning) {
     syncAgain = true;
     if (manual) toast('送信中です。完了までしばらくお待ちください');
@@ -612,6 +831,8 @@ async function syncNow(manual) {
   if (manual) busy(true, n ? `送信中… (${n}件・1件あたり数秒かかります)` : '点検対象設定を同期中…');
   try {
     const r = await Store.push();
+    // 共有された人がシート上で対応完了にした内容を残した場合は、この端末にも取り込む
+    if (r.keptAny) ownerAutoPull(true);
     if (r.sent) toast(`点検記録 ${r.sent} 件を送信しました`);
     else if (r.masterSent) toast(`点検対象設定 ${r.targets} 項目を同期しました`);
     else if (manual) toast('すべて送信済みです');
@@ -933,6 +1154,7 @@ function submitDone() {
   it.resolvedCause = cause;
   it.resolvedNote = note;
   Util.setResolvedPhotos(it, donePhotos);
+  it._dirtyResolve = true;   // 共有された人の端末では、この項目の対応内容だけを送る
 
   // 対応完了時は自動的に「良」へ変更する。
   // 未対応へ戻した際に復元できるよう、変更前の判定を必ず保存する。
@@ -967,6 +1189,9 @@ function unresolveItem(rid, idx) {
   it.resolvedCause = '';
   it.resolvedNote = '';
   Util.setResolvedPhotos(it, []);
+  it._dirtyResolve = true;
+  // 「未対応に戻す」を明示的に行った時刻。シート側で、他の人の対応完了より新しい操作か判断するのに使う
+  it.unresolvedAt = new Date().toISOString();
   rec.status = Util.statusOf(rec);
   rec.synced = false;
   Store.upsert(rec);
@@ -987,6 +1212,7 @@ function updateMoveCount() {
   $('#mvCount').textContent = `対象：${n} 件（${siteName($('#mvFrom').value)} → ${siteName($('#mvTo').value)}）`;
 }
 function moveRecordsSite() {
+  if (viewerBlocked()) return;
   const to = $('#mvTo').value, from = $('#mvFrom').value;
   if (to === from) return toast('誤った場所と正しい場所が同じです', true);
   const targets = moveTargets();
@@ -1419,6 +1645,7 @@ function move(arr, i, dir) {
 }
 
 function addMachine() {
+  if (viewerBlocked()) return;
   const name = prompt('追加する点検機械の名称を入力してください', '');
   if (name === null) return;
   if (!name.trim()) return toast('機械名を入力してください', true);
@@ -1433,6 +1660,7 @@ function addMachine() {
 }
 
 function resetMachines() {
+  if (viewerBlocked()) return;
   if (!confirm('点検機械と点検項目を初期状態（22機種）に戻します。\n追加・変更した内容は失われます。\n（過去の点検記録は残ります）\n\nよろしいですか？')) return;
   Store.resetMachines();
   openMachineId = null;
@@ -1451,11 +1679,20 @@ function renderSettings() {
   renderTargetEditor();
 
   const all = Store.records();
+  const lastPull = s.lastPull ? new Date(s.lastPull).toLocaleString('ja-JP') : '未実施';
   $('#dataInfo').textContent =
-    `端末内 ${all.length} 件（未送信 ${all.filter(r => !r.synced).length} 件）　最終取得：${s.lastPull ? new Date(s.lastPull).toLocaleString('ja-JP') : '未実施'}`;
+    `端末内 ${all.length} 件（未送信 ${all.filter(r => !r.synced).length} 件）　最終取得：${lastPull}`;
+
+  if (isViewer()) {
+    $('#vwName').value = s.inspector || '';
+    $('#vwInfo').textContent = `表示中の点検記録 ${all.length} 件　最終取得：${lastPull}`;
+  } else {
+    renderShareBox();
+  }
 }
 
 function saveSettings() {
+  if (viewerBlocked()) return;
   const url = $('#setGas').value.trim();
   if (url && !/^https:\/\/script\.google\.com\/macros\/s\/.+\/exec/.test(url)) {
     if (!confirm('GASのウェブアプリURL形式ではないようです。このまま保存しますか？')) return;
@@ -1467,7 +1704,8 @@ function saveSettings() {
     inspector: $('#setInspector').value.trim(),
     autoSync: $('#setAutoSync').checked
   });
-  if (urlChanged) Store.saveSettings({ lastMasterHash: '', lastMasterTargets: 0 });
+  // 別のスプレッドシートに変えた場合、共有の鍵は前のシートのものなので消す
+  if (urlChanged) Store.saveSettings({ lastMasterHash: '', lastMasterTargets: 0, ownerKey: '', shareKey: '' });
   $('#inpInspector').value = $('#setInspector').value.trim();
   toast('設定を保存しました');
 }
@@ -1499,6 +1737,7 @@ function exportJson() {
 }
 
 function clearSynced() {
+  if (viewerBlocked()) return;
   const keep = Store.records().filter(r => !r.synced);
   const del = Store.records().length - keep.length;
   if (!del) return toast('同期済みデータはありません');
