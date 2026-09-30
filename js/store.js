@@ -11,7 +11,8 @@ const LS_MACHINES = 'fi_machines_v1';
 const Store = {
   /* ---------- 設定 ---------- */
   settings() {
-    const def = { gasUrl: '', inspector: '', autoSync: true, lastPull: '' };
+    // role: 'owner'＝持ち主（全操作可）/ 'viewer'＝共有リンクで開いた人（閲覧＋要対応の操作のみ）
+    const def = { gasUrl: '', inspector: '', autoSync: true, lastPull: '', role: 'owner', ownerKey: '', shareKey: '' };
     try {
       return Object.assign(def, JSON.parse(localStorage.getItem(LS_SETTINGS) || '{}'));
     } catch (e) {
@@ -20,6 +21,12 @@ const Store = {
   },
   saveSettings(s) {
     localStorage.setItem(LS_SETTINGS, JSON.stringify(Object.assign(this.settings(), s)));
+  },
+  isViewer() { return this.settings().role === 'viewer'; },
+  // スプレッドシートへ送る鍵（オーナーはオーナー鍵、共有された人は共有鍵）
+  authKey() {
+    const s = this.settings();
+    return s.role === 'viewer' ? (s.shareKey || '') : (s.ownerKey || '');
   },
 
   /* ---------- 点検場所（工場名は端末内にのみ保存） ---------- */
@@ -152,6 +159,7 @@ const Store = {
   async push() {
     const s = this.settings();
     if (!s.gasUrl) throw new Error('スプレッドシートの連携URLが未設定です（設定タブ）');
+    if (s.role === 'viewer') return this.pushResolves();
     const pending = this.unsynced();
 
     // 進捗率の分母となる「工場×機械」の点検対象設定を同期する。
@@ -169,6 +177,7 @@ const Store = {
     }
 
     let sent = 0;
+    let keptAny = false;
     for (let pendingIndex = 0; pendingIndex < pending.length; pendingIndex++) {
       const rec = pending[pendingIndex];
       const json = await this.post(s.gasUrl, {
@@ -177,28 +186,76 @@ const Store = {
         refresh: pendingIndex === pending.length - 1
       });
       if (!json.ok) throw new Error(json.error || '保存に失敗しました');
-      const list = this.records();
-      const i = list.findIndex(r => r.id === rec.id);
-      if (i >= 0) {
-        list[i].synced = true;
-        list[i].syncedAt = new Date().toISOString();
-        if (json.photoUrls) {
-          json.photoUrls.forEach(p => {
-            const it = list[i].items[p.index];
-            if (!it) return;
-            // ドライブに保存できたら端末側の画像は破棄して容量を節約する
-            const resolved = p.kind === 'resolved';
-            const photos = resolved ? this.resolvedPhotosOfRaw(it) : this.photosOfRaw(it);
-            const ph = photos[p.slot || 0];
-            if (ph) { ph.photoUrl = p.url; ph.photoId = p.id || ''; ph.photo = ''; }
-            if (resolved) Util.setResolvedPhotos(it, photos); else Util.setPhotos(it, photos);
-          });
-        }
-        this.writeAll(list);
-      }
+      if (json.kept) keptAny = true;
+      this.markSent(rec.id, json);
       sent++;
     }
-    return { sent, targets, masterSent };
+    return { sent, targets, masterSent, keptAny };
+  },
+
+  // 送信が済んだ記録に印を付け、ドライブに保存された写真のURLを反映する
+  markSent(id, json) {
+    const list = this.records();
+    const i = list.findIndex(r => r.id === id);
+    if (i < 0) return;
+    list[i].synced = true;
+    list[i].syncedAt = new Date().toISOString();
+    // シート側の更新日時に合わせておくと、次の取得で自分の送信内容を取り込み直さずに済む
+    if (json.updatedAt) list[i].updatedAt = json.updatedAt;
+    (list[i].items || []).forEach(it => { delete it._dirtyResolve; });
+    (json.photoUrls || []).forEach(p => {
+      const it = list[i].items[p.index];
+      if (!it) return;
+      // ドライブに保存できたら端末側の画像は破棄して容量を節約する
+      const resolved = p.kind === 'resolved';
+      const photos = resolved ? this.resolvedPhotosOfRaw(it) : this.photosOfRaw(it);
+      const ph = photos[p.slot || 0];
+      if (ph) { ph.photoUrl = p.url; ph.photoId = p.id || ''; ph.photo = ''; }
+      if (resolved) Util.setResolvedPhotos(it, photos); else Util.setPhotos(it, photos);
+    });
+    this.writeAll(list);
+  },
+
+  // 共有された人：要対応の操作（対応完了・未対応に戻す）をした項目だけを送る
+  async pushResolves() {
+    const s = this.settings();
+    let sent = 0;
+    for (const rec of this.unsynced()) {
+      const items = [];
+      (rec.items || []).forEach((it, idx) => {
+        if (!it._dirtyResolve) return;
+        items.push({
+          index: idx, no: it.no || idx + 1, name: it.name,
+          resolved: !!it.resolved, resolvedAt: it.resolvedAt || '', resolvedBy: it.resolvedBy || '',
+          resolvedCause: it.resolvedCause || '', resolvedNote: it.resolvedNote || '',
+          resolvedPhotos: this.resolvedPhotosOfRaw(it)
+        });
+      });
+      if (!items.length) { this.markSent(rec.id, {}); continue; }
+      const json = await this.post(s.gasUrl, { action: 'resolve', recordId: rec.id, items });
+      if (!json.ok) throw new Error(json.error || '送信に失敗しました');
+      this.markSent(rec.id, json);
+      sent++;
+    }
+    return { sent, targets: 0, masterSent: false };
+  },
+
+  // 共有を開始する／共有リンクを作り直す（オーナーのみ）。共有鍵を返す
+  async setupShare(regenerate) {
+    const s = this.settings();
+    if (!s.gasUrl) throw new Error('先にスプレッドシート連携URLを設定してください');
+    let ownerKey = s.ownerKey;
+    if (!ownerKey) {
+      const a = new Uint8Array(24);
+      crypto.getRandomValues(a);
+      ownerKey = Array.from(a, b => b.toString(16).padStart(2, '0')).join('');
+    }
+    const json = await this.post(s.gasUrl, { action: 'setupShare', ownerKey, regenerate: !!regenerate });
+    if (!json.ok) throw new Error(json.denied
+      ? 'この端末はオーナーとして登録されていません。オーナー用リンクを開いてから操作してください'
+      : (json.error || '共有の設定に失敗しました'));
+    this.saveSettings({ ownerKey, shareKey: json.shareKey });
+    return json.shareKey;
   },
 
   // 送信結果の「何枚目か」とずれないよう、写真一覧をそのままの並びで取り出す
@@ -221,10 +278,16 @@ const Store = {
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify(body),
+        body: JSON.stringify(Object.assign({ key: this.authKey() }, body)),
         signal: ctrl.signal
       });
-      return await res.json();
+      const json = await res.json();
+      if (json && json.denied && body.action !== 'setupShare') {
+        throw new Error(this.isViewer()
+          ? '共有リンクでは要対応の操作のみ行えます'
+          : 'スプレッドシートの共有が開始されていますが、この端末にオーナー鍵がありません。設定タブの「オーナー用リンク」をこの端末で開いてください');
+      }
+      return json;
     } catch (e) {
       if (e && e.name === 'AbortError') throw new Error('スプレッドシートからの応答がありません（時間切れ）。しばらくして再度お試しください');
       throw e;
@@ -236,10 +299,26 @@ const Store = {
   async pull(ym) {
     const s = this.settings();
     if (!s.gasUrl) throw new Error('スプレッドシートの連携URLが未設定です（設定タブ）');
-    const url = s.gasUrl + '?action=list&ym=' + encodeURIComponent(ym || '');
-    const res = await fetch(url);
-    const json = await res.json();
+    const url = s.gasUrl + '?action=list&ym=' + encodeURIComponent(ym || '') +
+      '&key=' + encodeURIComponent(this.authKey());
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 90000);
+    let json;
+    try {
+      json = await (await fetch(url, { signal: ctrl.signal })).json();
+    } catch (e) {
+      if (e && e.name === 'AbortError') throw new Error('スプレッドシートからの応答がありません（時間切れ）');
+      throw e;
+    } finally {
+      clearTimeout(timer);
+    }
+    if (json.denied) throw new Error(this.isViewer()
+      ? 'この共有リンクは無効になっています。新しい共有リンクを受け取ってください'
+      : 'この端末にオーナー鍵がありません。設定タブの「オーナー用リンク」をこの端末で開いてください');
     if (!json.ok) throw new Error(json.error || '取得に失敗しました');
+
+    // 共有された人の端末では、工場名・機械・点検対象をスプレッドシートの内容に合わせる
+    if (s.role === 'viewer' && json.master) this.applyMaster(json.master);
 
     const list = this.records();
     const byId = Object.fromEntries(list.map(r => [r.id, r]));
@@ -260,6 +339,23 @@ const Store = {
     this.writeAll(list);
     this.saveSettings({ lastPull: new Date().toISOString() });
     return { added, total: json.records.length };
+  },
+
+  // スプレッドシートの点検対象マスタを、この端末の工場・機械・点検対象として取り込む（共有された人用）
+  applyMaster(master) {
+    if (!master || !master.sites || !master.sites.length) return;
+    localStorage.setItem(LS_SITES, JSON.stringify(master.sites));
+    const machines = master.machines.map(m => {
+      const d = DEFAULT_MACHINES.find(x => x.id === m.id);
+      return d ? Object.assign(JSON.parse(JSON.stringify(d)), { name: m.name })
+        : { id: m.id, name: m.name, icon: '🔧', items: [{ name: m.name, type: 'judge', unit: '' }] };
+    });
+    const other = DEFAULT_MACHINES.find(x => x.freeOnly);
+    if (other && !machines.some(m => m.id === other.id)) machines.push(JSON.parse(JSON.stringify(other)));
+    localStorage.setItem(LS_MACHINES, JSON.stringify(this.ensureCompletionItem(machines)));
+    const t = {};
+    master.sites.forEach(site => { t[site.id] = (master.targets && master.targets[site.id]) || []; });
+    localStorage.setItem(LS_TARGETS, JSON.stringify(t));
   }
 };
 
