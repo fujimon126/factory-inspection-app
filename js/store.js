@@ -249,10 +249,13 @@ const Store = {
       const a = new Uint8Array(24);
       crypto.getRandomValues(a);
       ownerKey = Array.from(a, b => b.toString(16).padStart(2, '0')).join('');
+      // 送信前に保存しておく。スプレッドシート側で登録されたのに応答だけ届かなかった場合も、
+      // もう一度押せば同じ鍵で送られるので「オーナーではない」と拒否されない
+      this.saveSettings({ ownerKey });
     }
     const json = await this.post(s.gasUrl, { action: 'setupShare', ownerKey, regenerate: !!regenerate });
     if (!json.ok) throw new Error(json.denied
-      ? 'この端末はオーナーとして登録されていません。オーナー用リンクを開いてから操作してください'
+      ? '共有はすでに別の端末（またはブラウザ）で開始されています。その端末の設定タブにある「オーナー用リンク」をこの端末で開いてください。わからない場合は Apps Script で「共有をリセット」を実行してから、もう一度押してください'
       : (json.error || '共有の設定に失敗しました'));
     this.saveSettings({ ownerKey, shareKey: json.shareKey });
     return json.shareKey;
