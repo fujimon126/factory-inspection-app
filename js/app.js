@@ -87,6 +87,17 @@ function siteLabel(rec) {
   return (rec.siteId && Store.siteName(rec.siteId)) || rec.site || '';
 }
 
+/* ドライブの縮小画像は、一度に多く読み込むと一時的に失敗することがある。
+   失敗した写真は間隔をあけて最大3回まで読み込み直す */
+document.addEventListener('error', e => {
+  const img = e.target;
+  if (!(img instanceof HTMLImageElement) || !img.src.startsWith('https://drive.google.com/thumbnail')) return;
+  const n = Number(img.dataset.retry || 0);
+  if (n >= 3) return;
+  img.dataset.retry = n + 1;
+  setTimeout(() => { img.src = img.src.replace(/&retry=\d+$/, '') + '&retry=' + (n + 1); }, 2000 * (n + 1));
+}, true);
+
 /* ---------------- 初期化 ---------------- */
 function init() {
   // 共有リンク／オーナー用リンクで開かれた場合は、先に設定を取り込む
@@ -129,6 +140,8 @@ function init() {
   ['#mvDate', '#mvFrom', '#mvTo'].forEach(s => on(s, 'change', updateMoveCount));
   on('#btnMove', 'click', moveRecordsSite);
   on('#dashMonth', 'change', renderDash);
+  // 共有された人が自分で日付・月を選んだら、以降は自動で動かさない
+  ['inpDate', 'hisMonth', 'dashMonth'].forEach(id => on('#' + id, 'change', () => { viewerPicked[id] = true; }));
   on('#btnPull', 'click', pullFromSheet);
   on('#btnSync', 'click', () => syncNow(true));
   on('#btnVwSave', 'click', () => {
@@ -162,6 +175,7 @@ function init() {
 
   if (Store.isViewer()) {
     // 共有された人は要対応から始め、スプレッドシートの最新内容を取り込む
+    fitViewerMonth();
     show('todo');
     refreshShared(false);
   } else {
@@ -240,6 +254,7 @@ async function refreshShared(manual) {
     if (Store.unsynced().length) await Store.push();
     await Store.pull('');
     renderSiteOptions();
+    fitViewerMonth();
     rerenderCurrent();
     if (manual) toast('最新の情報を取得しました');
   } catch (e) {
@@ -250,6 +265,20 @@ async function refreshShared(manual) {
     updatePendingBadge();
     updateTodoBadge();
   }
+}
+
+/* 共有された人：今月の記録がまだ無いとき（月初など）、点検・履歴・進捗の表示を
+   記録のある最新の月に合わせる。本人が日付・月を変えた後は動かさない。 */
+const viewerPicked = { inpDate: false, hisMonth: false, dashMonth: false };
+function fitViewerMonth() {
+  if (!isViewer()) return;
+  const recs = Store.records();
+  if (!recs.length) return;
+  const latest = recs.reduce((a, r) => (r.date > a ? r.date : a), '');
+  const hasMonth = ym => recs.some(r => Util.ym(r.date) === ym);
+  if (!viewerPicked.inpDate && !hasMonth(Util.ym($('#inpDate').value))) $('#inpDate').value = latest;
+  if (!viewerPicked.hisMonth && !hasMonth($('#hisMonth').value)) $('#hisMonth').value = Util.ym(latest);
+  if (!viewerPicked.dashMonth && !hasMonth($('#dashMonth').value)) $('#dashMonth').value = Util.ym(latest);
 }
 
 /* オーナー：共有中は、共有された人の「対応完了」を取り込むため裏で最新を取得する（3分に1回まで） */
