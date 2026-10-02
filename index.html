@@ -102,6 +102,104 @@
     <p class="hint viewer-only" style="text-align:center">閲覧モードのため、点検記録は変更できません。</p>
   </section>
 
+  <!-- ========== 修理入力 ========== -->
+  <section id="view-repair" class="view hidden">
+    <div class="card">
+      <div class="field">
+        <label for="repDate">① 修理実施日</label>
+        <input type="date" id="repDate">
+      </div>
+      <div class="field">
+        <label for="repSite">② 修理場所</label>
+        <select id="repSite"></select>
+      </div>
+      <div class="field owner-only">
+        <label for="repPerson">修理者</label>
+        <input type="text" id="repPerson" placeholder="氏名" autocomplete="name">
+      </div>
+    </div>
+
+    <p class="hint viewer-only">閲覧モードです。修理した機械をタップすると記録を見られます。ほかの月は「修理実施日」を変えると見られます。</p>
+    <h2 class="sect">③ 修理機械を選択</h2>
+    <p class="hint" id="repHint"></p>
+    <div id="repMachineGrid" class="grid"></div>
+    <h2 class="sect">この月の修理記録</h2>
+    <div id="repList"></div>
+  </section>
+
+  <!-- ========== 修理内容入力 ========== -->
+  <section id="view-rform" class="view hidden">
+    <div class="card">
+      <div id="rfHead" class="formhead"></div>
+      <div class="field inline">
+        <label for="rfSite">修理場所</label>
+        <select id="rfSite"></select>
+      </div>
+      <div class="field inline">
+        <label for="rfDate">修理日</label>
+        <input type="date" id="rfDate">
+      </div>
+      <div class="field inline">
+        <label for="rfPerson">修理者</label>
+        <input type="text" id="rfPerson" placeholder="氏名">
+      </div>
+      <div class="field inline">
+        <label for="rfUnit">号機・設備No.</label>
+        <input type="text" id="rfUnit" placeholder="例）1号機（任意）">
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="field">
+        <label for="rfPart">修理箇所</label>
+        <input type="text" id="rfPart" list="rfPartList" placeholder="例）ドアパッキン（候補から選択・自由入力）">
+        <datalist id="rfPartList"></datalist>
+      </div>
+      <div class="field">
+        <label for="rfSymptom">症状・不具合の内容</label>
+        <textarea id="rfSymptom" rows="3" placeholder="例）運転中に異音がする、水漏れ"></textarea>
+      </div>
+      <div class="field">
+        <label for="rfCause">原因</label>
+        <textarea id="rfCause" rows="2" placeholder="例）ベアリングの摩耗"></textarea>
+      </div>
+      <div class="field">
+        <label for="rfWork">修理内容（必須）</label>
+        <textarea id="rfWork" rows="3" placeholder="例）ベアリングを交換、試運転で異音なしを確認"></textarea>
+      </div>
+      <div class="field">
+        <label for="rfParts">使用部品・交換部品</label>
+        <input type="text" id="rfParts" placeholder="例）ベアリング 6205 ×2">
+      </div>
+      <div class="field">
+        <label>状態</label>
+        <div class="judges judges3" id="rfStatus">
+          <button class="jbtn ok" data-rs="DONE" aria-pressed="false">完了</button>
+          <button class="jbtn caution" data-rs="WATCH" aria-pressed="false">経過観察</button>
+          <button class="jbtn ng" data-rs="OPEN" aria-pressed="false">未完了</button>
+        </div>
+        <p class="hint" style="margin:6px 2px 0">部品待ちなどで直っていない場合は「未完了」を選んでください。</p>
+      </div>
+      <div class="field">
+        <label>写真（任意・複数可）</label>
+        <div class="subrow owner-only">
+          <button id="rfPhotoBtn" class="btn ghost sm" style="flex:1">📷 写真を撮影・選択</button>
+        </div>
+        <div id="rfPhotoThumb"></div>
+      </div>
+      <div class="field">
+        <label for="rfNote">備考</label>
+        <textarea id="rfNote" rows="2" placeholder="次回確認事項など"></textarea>
+      </div>
+    </div>
+
+    <div class="actionbar owner-only">
+      <button id="rfDelete" class="btn danger ghost hidden">削除</button>
+      <button id="rfSave" class="btn primary">保存する</button>
+    </div>
+    <p class="hint viewer-only" style="text-align:center">閲覧モードのため、修理記録は変更できません。</p>
+  </section>
+
   <!-- ========== 要対応リスト ========== -->
   <section id="view-todo" class="view hidden">
     <div class="card filters">
@@ -280,6 +378,7 @@
 
 <nav class="tabbar">
   <button class="tab active" data-view="inspect"><span>📋</span>点検</button>
+  <button class="tab" data-view="repair"><span>🔧</span>修理</button>
   <button class="tab" data-view="todo"><span>🚨</span>要対応<i id="todoBadge" class="tbadge hidden">0</i></button>
   <button class="tab" data-view="history"><span>🗂️</span>履歴</button>
   <button class="tab" data-view="dash"><span>📊</span>進捗</button>
@@ -336,5 +435,6 @@
 <script src="js/data.js"></script>
 <script src="js/store.js"></script>
 <script src="js/app.js"></script>
+<script src="js/repair.js"></script>
 </body>
 </html>

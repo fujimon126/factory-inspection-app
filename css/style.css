@@ -226,9 +226,11 @@ body:not(.viewer) .viewer-only{display:none !important}
 .vbadge{font-size:11px;font-weight:700;background:#fff3d6;color:#7a5200;border-radius:10px;padding:3px 8px;white-space:nowrap}
 /* 点検記録は読み取り専用で表示する（判定の変更・写真の追加削除をさせない） */
 body.viewer #view-form .jbtn,
-body.viewer #view-form #noteJudges .jbtn{pointer-events:none}
+body.viewer #view-form #noteJudges .jbtn,
+body.viewer #view-rform .jbtn{pointer-events:none}
 body.viewer #view-form .photobtn,
-body.viewer #view-form .thumb button{display:none}
+body.viewer #view-form .thumb button,
+body.viewer #view-rform .thumb button{display:none}
 .sharelink{width:100%;font-size:12px;padding:10px;background:#f4f7fa}
 .shareacts{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap}
 .shareacts .btn{flex:1 1 auto}
