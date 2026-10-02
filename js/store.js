@@ -7,6 +7,7 @@ const LS_SETTINGS = 'fi_settings_v1';
 const LS_TARGETS = 'fi_targets_v1';
 const LS_SITES = 'fi_sites_v1';
 const LS_MACHINES = 'fi_machines_v1';
+const LS_REPAIRS = 'fi_repairs_v1';
 
 const Store = {
   /* ---------- 設定 ---------- */
@@ -155,6 +156,56 @@ const Store = {
     return this.records().filter(r => !r.synced);
   },
 
+  /* ---------- 修理記録（1件＝1回の修理） ---------- */
+  repairs() {
+    try {
+      return JSON.parse(localStorage.getItem(LS_REPAIRS) || '[]');
+    } catch (e) {
+      return [];
+    }
+  },
+  writeRepairs(list) {
+    localStorage.setItem(LS_REPAIRS, JSON.stringify(list));
+  },
+  getRepair(id) {
+    return this.repairs().find(r => r.id === id) || null;
+  },
+  upsertRepair(rep) {
+    const list = this.repairs();
+    const i = list.findIndex(r => r.id === rep.id);
+    rep.updatedAt = new Date().toISOString();
+    if (i >= 0) list[i] = rep; else list.unshift(rep);
+    this.writeRepairs(list);
+    return rep;
+  },
+  removeRepair(id) {
+    this.writeRepairs(this.repairs().filter(r => r.id !== id));
+  },
+  unsyncedRepairs() {
+    return this.repairs().filter(r => !r.synced);
+  },
+  // 送信済みの修理記録をスプレッドシートからも削除する
+  async deleteRepairRemote(id) {
+    const s = this.settings();
+    const json = await this.post(s.gasUrl, { action: 'deleteRepair', id });
+    if (!json.ok) throw new Error(json.error || '削除に失敗しました');
+  },
+  markRepairSent(id, json) {
+    const list = this.repairs();
+    const rep = list.find(r => r.id === id);
+    if (!rep) return;
+    rep.synced = true;
+    rep.syncedAt = new Date().toISOString();
+    if (json.updatedAt) rep.updatedAt = json.updatedAt;
+    const photos = this.photosOfRaw(rep);
+    (json.photoUrls || []).forEach(p => {
+      const ph = photos[p.slot || 0];
+      if (ph) { ph.photoUrl = p.url; ph.photoId = p.id || ''; ph.photo = ''; }
+    });
+    Util.setPhotos(rep, photos);
+    this.writeRepairs(list);
+  },
+
   /* ---------- スプレッドシート同期 ---------- */
   async push() {
     const s = this.settings();
@@ -190,7 +241,16 @@ const Store = {
       this.markSent(rec.id, json);
       sent++;
     }
-    return { sent, targets, masterSent, keptAny };
+
+    // 修理記録を送る
+    let repSent = 0;
+    for (const rep of this.unsyncedRepairs()) {
+      const json = await this.post(s.gasUrl, { action: 'saveRepair', repair: rep });
+      if (!json.ok) throw new Error(json.error || '修理記録の保存に失敗しました');
+      this.markRepairSent(rep.id, json);
+      repSent++;
+    }
+    return { sent, repSent, targets, masterSent, keptAny };
   },
 
   // 送信が済んだ記録に印を付け、ドライブに保存された写真のURLを反映する
@@ -340,6 +400,22 @@ const Store = {
     });
     list.sort((a, b) => (b.date + b.createdAt).localeCompare(a.date + a.createdAt));
     this.writeAll(list);
+
+    // 修理記録も同じ考え方で取り込む（端末で未送信の変更があるものは上書きしない）
+    if (Array.isArray(json.repairs)) {
+      // 全期間を取得したときは、シートで削除された送信済みの修理記録を端末からも消す
+      const onSheet = new Set(json.repairs.map(r => r.id));
+      const reps = this.repairs().filter(r => ym || !r.synced || onSheet.has(r.id));
+      const repById = Object.fromEntries(reps.map(r => [r.id, r]));
+      json.repairs.forEach(r => {
+        if (!r.siteId || !this.siteName(r.siteId)) r.siteId = this.siteIdByName(r.site) || r.siteId;
+        const cur = repById[r.id];
+        if (!cur) reps.push(Object.assign(r, { synced: true }));
+        else if (cur.synced && new Date(r.updatedAt) > new Date(cur.updatedAt || 0)) Object.assign(cur, r, { synced: true });
+      });
+      reps.sort((a, b) => (b.date + (b.createdAt || '')).localeCompare(a.date + (a.createdAt || '')));
+      this.writeRepairs(reps);
+    }
     this.saveSettings({ lastPull: new Date().toISOString() });
     return { added, total: json.records.length };
   },

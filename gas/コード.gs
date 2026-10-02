@@ -16,6 +16,7 @@ var SH_DET = '点検明細';
 var SH_DASH = '進捗ダッシュボード';
 var SH_TARGET = '点検対象マスタ';
 var SH_DOSING = '投入機測定';
+var SH_REPAIR = '修理記録';
 var PHOTO_FOLDER = '工場点検_写真';
 
 var REC_HEAD = ['ID', '点検日', '年月', '点検場所', '点検機械', '号機', '点検者',
@@ -27,6 +28,10 @@ var DET_HEAD = ['ID', '点検日', '年月', '点検場所', '点検機械', '�
 var TARGET_HEAD = ['場所ID', '点検場所', '機械ID', '点検機械', '対象', '更新日時'];
 var DOSING_HEAD = ['ID', '点検日', '年月', '点検場所', '投入機番号', 'P番号', '洗剤・助剤名',
   '測定値', '判定', '所見', '点検者', '更新日時'];
+var REPAIR_HEAD = ['ID', '修理日', '年月', '修理場所', '修理機械', '号機', '修理者', '修理箇所',
+  '症状・不具合', '原因', '修理内容', '使用部品', '状態', '写真URL', '備考', '登録日時', '更新日時',
+  '場所ID', '機械ID'];
+var REPAIR_STATUS = { DONE: '完了', WATCH: '経過観察', OPEN: '未完了' };
 
 var JUDGE_LABEL = { OK: '良', CAUTION: '要注意', NG: '不良', NA: '対象外', '': '未判定' };
 
@@ -41,6 +46,7 @@ function 初期設定() {
   safe_(function () { det.setFrozenRows(1); });
   safe_(function () { target.setFrozenRows(1); });
   safe_(function () { dosing.setFrozenRows(1); });
+  repairSheet_(ss);
 
   // ※ データシートへの表示形式（setNumberFormat）の設定は行いません。
   //    シートが「テーブル」になっていると列の型が固定されており、
@@ -520,6 +526,8 @@ function doPost(e) {
     if (body.action === 'syncMaster') return json_(isOwner_(body.key) ? syncTargetMaster_(body.master) : DENIED);
     if (body.action === 'save') return json_(isOwner_(body.key) ? saveRecord_(body.record, body.refresh !== false) : DENIED);
     if (body.action === 'resolve') return json_(canView_(body.key) ? resolveItems_(body) : DENIED);
+    if (body.action === 'saveRepair') return json_(isOwner_(body.key) ? saveRepair_(body.repair) : DENIED);
+    if (body.action === 'deleteRepair') return json_(isOwner_(body.key) ? deleteRepair_(body.id) : DENIED);
     return json_({ ok: false, error: '不明なアクションです' });
   } catch (err) {
     return json_({ ok: false, error: String(err) });
@@ -767,7 +775,7 @@ function doGet(e) {
     }
     if (p.action === 'list') {
       if (!canView_(p.key)) return json_(DENIED);
-      return json_({ ok: true, records: listRecords_(p.ym), master: readTargetMaster_() });
+      return json_({ ok: true, records: listRecords_(p.ym), repairs: listRepairs_(p.ym), master: readTargetMaster_() });
     }
     return json_({ ok: false, error: '不明なアクションです' });
   } catch (err) {
@@ -905,6 +913,67 @@ function resolveItems_(body) {
   recSh.getRange(recRow, 1, 1, REC_HEAD.length).setValues([recInfo]);
   refreshDashboard_(ss);
   return { ok: true, photoUrls: photoUrls, updatedAt: now.toISOString() };
+}
+
+/* ============ 修理記録 ============
+   1件の修理を「修理記録」シートの1行として保存する。写真は点検と同じフォルダへ保存する。 */
+function repairSheet_(ss) {
+  var isNew = !ss.getSheetByName(SH_REPAIR);
+  var sh = getSheet_(ss, SH_REPAIR, REPAIR_HEAD);
+  if (isNew) {
+    safe_(function () { sh.setFrozenRows(1); });
+    // 状態の色分け（完了＝緑 / 経過観察＝黄 / 未完了＝赤）
+    safe_(function () {
+      var st = sh.getRange('M2:M10000');
+      sh.setConditionalFormatRules([
+        rule_(st, '完了', C_OK, true), rule_(st, '経過観察', C_CA, true), rule_(st, '未完了', C_NG, true)
+      ]);
+    });
+  }
+  return sh;
+}
+
+function saveRepair_(rep) {
+  if (!rep || !rep.id) return { ok: false, error: '修理記録の内容がありません' };
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sh = repairSheet_(ss);
+  var now = new Date();
+  var photoUrls = [];
+  var urls = savePhotoList_(photosOf_(rep, ''), [rep.date, rep.site, rep.machineName, '修理', rep.part || ''],
+    function (slot, p) { photoUrls.push({ slot: slot, url: p.url, id: p.id }); });
+  var row = [rep.id, toDate_(rep.date), String(rep.date || '').slice(0, 7), rep.site || '', rep.machineName || '',
+    rep.unit || '', rep.repairer || '', rep.part || '', rep.symptom || '', rep.cause || '', rep.work || '',
+    rep.parts || '', REPAIR_STATUS[rep.status] || '', urls.join('\n'), rep.note || '',
+    rep.createdAt ? new Date(rep.createdAt) : now, now, rep.siteId || '', rep.machineId || ''];
+  var idx = findRow_(sh, rep.id);
+  if (idx > 0) sh.getRange(idx, 1, 1, row.length).setValues([row]);
+  else sh.appendRow(row);
+  return { ok: true, id: rep.id, photoUrls: photoUrls, updatedAt: now.toISOString() };
+}
+
+function deleteRepair_(id) {
+  var sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SH_REPAIR);
+  if (sh) deleteDetail_(sh, id);
+  return { ok: true };
+}
+
+function listRepairs_(ym) {
+  var sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SH_REPAIR);
+  if (!sh || sh.getLastRow() < 2) return [];
+  var statusKey = {};
+  for (var k in REPAIR_STATUS) statusKey[REPAIR_STATUS[k]] = k;
+  return sh.getRange(2, 1, sh.getLastRow() - 1, REPAIR_HEAD.length).getValues()
+    .filter(function (r) { return r[0] && (!ym || ymOf_(r[1]) === ym); })
+    .map(function (r) {
+      return {
+        id: String(r[0]), date: fmtDate_(r[1]), site: r[3], machineName: r[4], unit: r[5],
+        repairer: r[6], part: r[7], symptom: r[8], cause: r[9], work: r[10], parts: r[11],
+        status: statusKey[r[12]] || '', photos: urlsToPhotos_(r[13]), note: r[14],
+        createdAt: r[15] ? new Date(r[15]).toISOString() : '',
+        updatedAt: r[16] ? new Date(r[16]).toISOString() : '',
+        siteId: String(r[17] || ''), machineId: String(r[18] || '') || machineIdOf_(r[4])
+      };
+    });
 }
 
 function labelToKey_(label) {
