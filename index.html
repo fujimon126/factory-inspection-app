@@ -10,7 +10,7 @@
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <link rel="icon" href="icons/icon-192.png">
-<link rel="stylesheet" href="css/style.css">
+<link rel="stylesheet" href="css/style.css?v=20261010">
 <title>工場点検アプリ</title>
 </head>
 <body>
@@ -451,9 +451,10 @@
 <div id="toast" class="toast hidden"></div>
 <div id="overlay" class="overlay hidden"><div class="spinner"></div><span id="overlayText"></span></div>
 
-<script src="js/data.js"></script>
-<script src="js/store.js"></script>
-<script src="js/app.js"></script>
-<script src="js/repair.js"></script>
+<!-- ?v= はアプリ更新時に変える。画面と古いプログラムが組み合わさって動かなくなるのを防ぐため -->
+<script src="js/data.js?v=20261010"></script>
+<script src="js/store.js?v=20261010"></script>
+<script src="js/app.js?v=20261010"></script>
+<script src="js/repair.js?v=20261010"></script>
 </body>
 </html>
