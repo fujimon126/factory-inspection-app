@@ -9,6 +9,7 @@ const REPAIR_STATUS = {
   OPEN: { label: '未完了', cls: 'ng' }
 };
 let repEditing = null;   // 編集中の修理記録
+let repReturn = 'repair'; // 修理内容の画面を閉じたときに戻る画面（修理タブ／履歴タブ）
 
 function initRepair() {
   $('#repDate').value = Util.today();
@@ -67,12 +68,14 @@ function renderRepair() {
   renderRepairList(reps);
 }
 
-function renderRepairList(reps) {
+/* 修理記録の一覧（修理タブの「この月の修理記録」と、履歴タブの修理履歴で共通） */
+function renderRepairList(reps, sel, emptyMsg) {
+  sel = sel || '#repList';
   if (!reps.length) {
-    $('#repList').innerHTML = '<p class="empty">この月の修理記録はありません</p>';
+    $(sel).innerHTML = `<p class="empty">${emptyMsg || 'この月の修理記録はありません'}</p>`;
     return;
   }
-  $('#repList').innerHTML = reps.map(r => {
+  $(sel).innerHTML = reps.map(r => {
     const st = REPAIR_STATUS[r.status];
     const photos = Util.photosOf(r);
     const thumbs = photos.length ? '<div class="photos">' + photos.map((p, k) =>
@@ -94,15 +97,15 @@ function renderRepairList(reps) {
     </div>`;
   }).join('');
 
-  $$('#repList [data-rep-photo]').forEach(b => b.addEventListener('click', ev => {
+  $$(sel + ' [data-rep-photo]').forEach(b => b.addEventListener('click', ev => {
     ev.stopPropagation();
     openRepairPhoto(b.dataset.repPhoto, +b.dataset.k);
   }));
-  $$('#repList [data-rep-share]').forEach(b => b.addEventListener('click', ev => {
+  $$(sel + ' [data-rep-share]').forEach(b => b.addEventListener('click', ev => {
     ev.stopPropagation();
     shareRepair(b.dataset.repShare);
   }));
-  $$('#repList .rec').forEach(el => el.addEventListener('click', () => {
+  $$(sel + ' .rec').forEach(el => el.addEventListener('click', () => {
     const r = Store.getRepair(el.dataset.repid);
     if (r) openRepairForm(r.machineId, r.id);
   }));
@@ -131,8 +134,51 @@ function onPickRepairMachine(mid) {
   if (exist[idx]) openRepairForm(mid, exist[idx].id);
 }
 
+/* ---------- 修理履歴（履歴タブ） ---------- */
+function filteredRepairs() {
+  const all = $('#hisAll').checked;
+  const ym = $('#hisMonth').value, siteId = $('#hisSite').value;
+  const mid = $('#hisMachine').value, st = $('#hisRepStatus').value;
+  return Store.repairs()
+    .filter(r => (all || !ym || Util.ym(r.date) === ym) && (!siteId || sameSite(r, siteId)) &&
+      (!mid || r.machineId === mid) && (!st || r.status === st))
+    .sort((a, b) => (b.date + (b.createdAt || '')).localeCompare(a.date + (a.createdAt || '')));
+}
+function renderRepairHistory() {
+  // 機械の絞り込み候補（登録中の機械＋記録にだけ残っている機械）
+  const cur = $('#hisMachine').value;
+  const machines = Store.machines().map(m => ({ id: m.id, name: m.name }));
+  Store.repairs().forEach(r => {
+    if (r.machineId && !machines.some(m => m.id === r.machineId)) machines.push({ id: r.machineId, name: r.machineName });
+  });
+  $('#hisMachine').innerHTML = '<option value="">すべての機械</option>' +
+    machines.map(m => `<option value="${m.id}">${esc(m.name)}</option>`).join('');
+  if (machines.some(m => m.id === cur)) $('#hisMachine').value = cur;
+  $('#hisMonth').disabled = $('#hisAll').checked;
+
+  const list = filteredRepairs();
+  const count = s => list.filter(r => r.status === s).length;
+  $('#hisRepSummary').textContent = list.length
+    ? `${list.length} 件（未完了 ${count('OPEN')}・経過観察 ${count('WATCH')}・完了 ${count('DONE')}）` : '';
+  renderRepairList(list, '#historyList', '該当する修理記録がありません');
+}
+function exportRepairCsv() {
+  const list = filteredRepairs();
+  if (!list.length) return toast('出力するデータがありません', true);
+  const head = ['修理日', '修理場所', '修理機械', '号機', '修理者', '修理箇所', '症状・不具合', '原因',
+    '修理内容', '使用部品', '状態', '写真URL', '備考', '登録日時'];
+  const rows = [head].concat(list.map(r => [r.date, siteLabel(r), r.machineName, r.unit || '', r.repairer || '',
+    r.part || '', r.symptom || '', r.cause || '', r.work || '', r.parts || '', repairLabel(r),
+    Util.photosOf(r).map(p => p.photoUrl).filter(Boolean).join(' '), r.note || '', r.createdAt || '']));
+  const csv = '﻿' + rows.map(r => r.map(Util.csvEscape).join(',')).join('\r\n');
+  const period = $('#hisAll').checked ? '全期間' : ($('#hisMonth').value || '全期間');
+  download(new Blob([csv], { type: 'text/csv' }), `修理記録_${period}.csv`);
+  toast('CSVを書き出しました');
+}
+
 function openRepairForm(mid, id) {
   if (isViewer() && !id) return;   // 閲覧モードでは新しい修理は作らない
+  repReturn = currentView === 'history' ? 'history' : 'repair';
   let m = Store.machineById(mid);
   const src = id ? Store.getRepair(id) : null;
   // 機械が削除・未登録でも、記録があれば内容だけで表示する
@@ -238,7 +284,7 @@ function saveRepair() {
   if (r.siteId) $('#repSite').value = r.siteId;
   updatePendingBadge();
   toast('修理記録を保存しました');
-  show('repair');
+  show(repReturn);
   if (Store.settings().autoSync && Store.settings().gasUrl && navigator.onLine) syncNow(false);
 }
 
@@ -262,7 +308,7 @@ async function deleteRepair() {
   Store.removeRepair(r.id);
   updatePendingBadge();
   toast('削除しました');
-  show('repair');
+  show(repReturn);
 }
 
 /* 修理写真の拡大表示（点検写真と同じ表示・共有の仕組みを使う） */

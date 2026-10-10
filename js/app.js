@@ -44,7 +44,7 @@ function show(view) {
     $('#view-' + v).classList.toggle('hidden', v !== view);
   });
   currentView = view;
-  const tabOf = { form: 'inspect', rform: 'repair', master: 'settings' }[view] || view;
+  const tabOf = { form: 'inspect', rform: repReturn, master: 'settings' }[view] || view;
   $$('.tab').forEach(b => b.classList.toggle('active', b.dataset.view === tabOf));
   $('#btnBack').classList.toggle('hidden', !['form', 'rform', 'master'].includes(view));
   $('#appTitle').textContent = {
@@ -126,7 +126,7 @@ function init() {
   // 1か所が要素未検出などで失敗しても、他のボタンの登録が止まらないよう
   // それぞれ独立して try/catch する（on/onAll ヘルパー）。
   onAll('.tab', 'click', function () { show(this.dataset.view); });
-  on('#btnBack', 'click', () => show({ master: 'settings', rform: 'repair' }[currentView] || 'inspect'));
+  on('#btnBack', 'click', () => show({ master: 'settings', rform: repReturn }[currentView] || 'inspect'));
   on('#btnOpenMaster', 'click', () => show('master'));
   on('#btnAddMachine', 'click', addMachine);
   on('#btnResetMachines', 'click', resetMachines);
@@ -141,7 +141,8 @@ function init() {
   onAll('[data-bulk]', 'click', function () { bulkSet(this.dataset.bulk); });
   onAll('#noteJudges .jbtn', 'click', function () { setNoteJudge(this.dataset.nj); });
   on('#notePhotoBtn', 'click', pickNotePhoto);
-  ['#hisMonth', '#hisSite', '#hisStatus'].forEach(s => on(s, 'change', renderHistory));
+  ['#hisMonth', '#hisSite', '#hisStatus', '#hisMachine', '#hisRepStatus', '#hisAll'].forEach(s => on(s, 'change', renderHistory));
+  onAll('.segtab', 'click', function () { setHistoryKind(this.dataset.hk); });
   ['#todoSite', '#todoKind', '#todoDone'].forEach(s => on(s, 'change', renderTodo));
   on('#btnCsv', 'click', exportCsv);
   $('#mvDate').value = Util.today();
@@ -1292,7 +1293,21 @@ function filteredRecords() {
     .filter(r => (!ym || Util.ym(r.date) === ym) && (!siteId || sameSite(r, siteId)) && (!st || r.status === st))
     .sort((a, b) => (b.date + (b.createdAt || '')).localeCompare(a.date + (a.createdAt || '')));
 }
+/* 履歴タブの表示切り替え（点検履歴／修理履歴）。選んだ方を端末に覚えておく */
+function historyKind() {
+  try { return localStorage.getItem('fi_hisKind') === 'repair' ? 'repair' : 'inspect'; } catch (e) { return 'inspect'; }
+}
+function setHistoryKind(kind) {
+  try { localStorage.setItem('fi_hisKind', kind); } catch (e) { /* 保存できなくても表示は切り替える */ }
+  renderHistory();
+}
 function renderHistory() {
+  const kind = historyKind();
+  $('#view-history').classList.toggle('repmode', kind === 'repair');
+  $$('.segtab').forEach(b => b.classList.toggle('active', b.dataset.hk === kind));
+  if (currentView === 'history') $('#appTitle').textContent = kind === 'repair' ? '修理履歴' : '点検履歴';
+  if (kind === 'repair') return renderRepairHistory();
+  $('#hisMonth').disabled = false;
   const list = filteredRecords();
   if (!list.length) {
     $('#historyList').innerHTML = '<p class="empty">該当する点検記録がありません</p>';
@@ -1332,6 +1347,7 @@ function renderHistory() {
 }
 
 function exportCsv() {
+  if (historyKind() === 'repair') return exportRepairCsv();
   const list = filteredRecords();
   if (!list.length) return toast('出力するデータがありません', true);
   const head = ['点検日', '点検場所', '点検機械', '号機', '点検者', '点検項目', '判定', '測定値', '単位',
