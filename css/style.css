@@ -65,6 +65,13 @@ select{appearance:none;background-image:linear-gradient(45deg,transparent 50%,va
   background-position:calc(100% - 18px) 50%,calc(100% - 13px) 50%;background-size:5px 5px,5px 5px;background-repeat:no-repeat}
 .check{display:flex;align-items:center;gap:8px;font-size:14px;margin:6px 0 12px}
 .check input{width:20px;height:20px}
+/* 履歴タブの「点検履歴／修理履歴」切り替え */
+.segtabs{display:flex;gap:4px;background:#e4eaf0;border-radius:12px;padding:4px;margin-bottom:10px}
+.segtab{flex:1;border:0;background:none;border-radius:9px;padding:10px 4px;font-size:14px;font-weight:700;
+  color:var(--muted);font-family:inherit}
+.segtab.active{background:#fff;color:var(--blue);box-shadow:0 1px 3px rgba(20,40,60,.12)}
+#view-history.repmode .insp-only{display:none !important}
+#view-history:not(.repmode) .rep-only{display:none !important}
 .filters{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 .filters .field.inline{flex:1 1 46%;margin:0}
 .filters .field.inline label{min-width:52px;font-size:12px}

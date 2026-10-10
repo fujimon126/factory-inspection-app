@@ -223,6 +223,10 @@
 
   <!-- ========== 履歴 ========== -->
   <section id="view-history" class="view hidden">
+    <div class="segtabs" role="tablist">
+      <button class="segtab" data-hk="inspect" role="tab">📋 点検履歴</button>
+      <button class="segtab" data-hk="repair" role="tab">🔧 修理履歴</button>
+    </div>
     <div class="card filters">
       <div class="field inline">
         <label for="hisMonth">対象月</label>
@@ -232,7 +236,21 @@
         <label for="hisSite">場所</label>
         <select id="hisSite"></select>
       </div>
-      <div class="field inline">
+      <div class="field inline rep-only">
+        <label for="hisMachine">機械</label>
+        <select id="hisMachine"></select>
+      </div>
+      <div class="field inline rep-only">
+        <label for="hisRepStatus">状態</label>
+        <select id="hisRepStatus">
+          <option value="">すべて</option>
+          <option value="OPEN">未完了</option>
+          <option value="WATCH">経過観察</option>
+          <option value="DONE">完了</option>
+        </select>
+      </div>
+      <label class="check rep-only" style="margin:0"><input type="checkbox" id="hisAll" checked> 全期間を表示</label>
+      <div class="field inline insp-only">
         <label for="hisStatus">判定</label>
         <select id="hisStatus">
           <option value="">すべて</option>
@@ -243,7 +261,8 @@
       </div>
       <button id="btnCsv" class="btn ghost sm">CSV出力</button>
     </div>
-    <details class="card movebox owner-only">
+    <p class="hint rep-only" id="hisRepSummary"></p>
+    <details class="card movebox owner-only insp-only">
       <summary>点検場所を間違えて入力した場合（一括変更）</summary>
       <p class="hint">指定した日に、誤った場所で入力した記録をまとめて正しい場所へ移します。スプレッドシートも上書きされます。</p>
       <div class="field inline">
