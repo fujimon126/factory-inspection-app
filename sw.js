@@ -1,5 +1,5 @@
 /* オフライン動作用 Service Worker（アプリ本体をキャッシュ） */
-const CACHE = 'factory-inspection-v2';
+const CACHE = 'factory-inspection-v3';
 const ASSETS = [
   './',
   './index.html',
@@ -32,8 +32,9 @@ self.addEventListener('fetch', e => {
   if (e.request.method !== 'GET' || url.hostname.includes('script.google')) return;
   if (url.origin !== location.origin) return;
 
+  // cache: 'no-cache' で毎回サーバーに最新か確認する（ブラウザに残った古いファイルを使わない）
   e.respondWith(
-    fetch(e.request)
+    fetch(e.request, { cache: 'no-cache' })
       .then(res => {
         if (res.ok) {
           const copy = res.clone();
@@ -41,6 +42,8 @@ self.addEventListener('fetch', e => {
         }
         return res;
       })
-      .catch(() => caches.match(e.request).then(hit => hit || caches.match('./index.html')))
+      .catch(() => caches.match(e.request)
+        .then(hit => hit || caches.match(e.request, { ignoreSearch: true }))
+        .then(hit => hit || caches.match('./index.html')))
   );
 });
