@@ -812,6 +812,12 @@ function folderIdOf_(s) {
 function photoFolderAction_(body) {
   var p = PropertiesService.getScriptProperties();
   var cur = photoFolder_();
+  if (body.reshare) {
+    var rs = resharePhotos_(body.token);
+    rs.ok = true;
+    rs.name = cur.getName();
+    return rs;
+  }
   if (body.url) {
     var id = folderIdOf_(body.url);
     if (!id) return { ok: false, error: 'フォルダのURLを読み取れません。Googleドライブでフォルダを開き、アドレスバーのURLを貼り付けてください' };
@@ -847,11 +853,52 @@ function movePrevPhotos_(dest) {
   var it = prev.getFilesByType('image/jpeg');
   while (it.hasNext()) {
     if (Date.now() - start > 40000) return { moved: moved, left: true };
-    it.next().moveTo(dest);
+    var f = it.next();
+    f.moveTo(dest);
+    sharePhoto_(f);   // 移動で公開設定が外れることがあるため付け直す
     moved++;
   }
   // 移動中に一覧から漏れたものが無いか確かめる
   return { moved: moved, left: prev.getFilesByType('image/jpeg').hasNext() };
+}
+
+/* 写真を「リンクを知っている全員が閲覧可」にする（アプリに写真を表示するために必要）。
+   組織の共有ポリシーで設定できない場合は false を返す。 */
+function sharePhoto_(file) {
+  try {
+    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    return true;
+  } catch (e) {
+    Logger.log('共有設定をスキップしました: ' + e);
+    return false;
+  }
+}
+
+/* 現在の保存先にある写真の公開設定を確かめ、外れているものを付け直す（写真がアプリに表示されないときの修復）。
+   40秒で区切り、残りがあれば left:true と続きの位置（token）を返す。 */
+function resharePhotos_(token) {
+  var it;
+  try {
+    it = token ? DriveApp.continueFileIterator(String(token)) : photoFolder_().getFilesByType('image/jpeg');
+  } catch (e) {
+    it = photoFolder_().getFilesByType('image/jpeg');
+  }
+  var start = Date.now(), seen = 0, fixed = 0, failed = 0;
+  while (it.hasNext()) {
+    if (Date.now() - start > 40000) {
+      return { seen: seen, fixed: fixed, failed: failed, left: true, token: it.getContinuationToken() };
+    }
+    var f = it.next();
+    seen++;
+    try {
+      if (f.getSharingAccess() !== DriveApp.Access.ANYONE_WITH_LINK) {
+        if (sharePhoto_(f)) fixed++; else failed++;
+      }
+    } catch (e) {
+      failed++;
+    }
+  }
+  return { seen: seen, fixed: fixed, failed: failed, left: false, token: '' };
 }
 
 function savePhoto_(dataUrl, name) {

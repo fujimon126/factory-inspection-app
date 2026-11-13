@@ -10,7 +10,7 @@
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <link rel="icon" href="icons/icon-192.png">
-<link rel="stylesheet" href="css/style.css?v=20261113b">
+<link rel="stylesheet" href="css/style.css?v=20261113c">
 <title>工場点検アプリ</title>
 </head>
 <body>
@@ -379,6 +379,8 @@
         <button id="btnPhotoFolderCheck" class="btn ghost">現在の保存先を確認</button>
         <button id="btnPhotoFolderSave" class="btn primary">保存先を変更</button>
       </div>
+      <p class="hint" style="margin-top:12px">以前の写真がアプリに表示されなくなったときは、下のボタンで写真の公開設定（リンクを知っている全員が閲覧可）を付け直せます。</p>
+      <button id="btnPhotoReshare" class="btn ghost" style="width:100%">写真が表示されないときの修復</button>
     </div>
 
     <div class="card owner-only">
@@ -477,9 +479,9 @@
 <div id="overlay" class="overlay hidden"><div class="spinner"></div><span id="overlayText"></span></div>
 
 <!-- ?v= はアプリ更新時に変える。画面と古いプログラムが組み合わさって動かなくなるのを防ぐため -->
-<script src="js/data.js?v=20261113b"></script>
-<script src="js/store.js?v=20261113b"></script>
-<script src="js/app.js?v=20261113b"></script>
-<script src="js/repair.js?v=20261113b"></script>
+<script src="js/data.js?v=20261113c"></script>
+<script src="js/store.js?v=20261113c"></script>
+<script src="js/app.js?v=20261113c"></script>
+<script src="js/repair.js?v=20261113c"></script>
 </body>
 </html>

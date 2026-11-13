@@ -165,6 +165,7 @@ function init() {
   on('#btnTest', 'click', testConnection);
   on('#btnPhotoFolderCheck', 'click', () => photoFolder(false));
   on('#btnPhotoFolderSave', 'click', () => photoFolder(true));
+  on('#btnPhotoReshare', 'click', resharePhotos);
   on('#btnExportJson', 'click', exportJson);
   on('#btnClearSynced', 'click', clearSynced);
 
@@ -1848,6 +1849,35 @@ async function photoFolder(change) {
     }
     if (change) $('#setPhotoFolder').value = '';
     toast(change ? `保存先を「${json.name}」に変更しました${move ? `（写真 ${moved} 枚を移動）` : ''}` : `現在の保存先：${json.name}`);
+  } catch (e) {
+    toast('失敗：' + e.message, true);
+  } finally {
+    busy(false);
+  }
+}
+
+/* 保存先フォルダ内の写真の公開設定を付け直す（フォルダの移動などで外れ、アプリに写真が出なくなったときの修復）。
+   写真が多いと一度では終わらないので、残りが無くなるまで続きを依頼する。 */
+async function resharePhotos() {
+  const s = Store.settings();
+  if (!s.gasUrl) return toast('先にスプレッドシート連携のURLを設定してください', true);
+  busy(true, '写真の公開設定を確認中…');
+  try {
+    let token = '', seen = 0, fixed = 0, failed = 0, json;
+    do {
+      json = await Store.post(s.gasUrl, { action: 'photoFolder', reshare: true, token });
+      if (!json.ok || json.seen === undefined) throw new Error(json.ok || json.error === '不明なアクションです'
+        ? 'スプレッドシート側のプログラム（Apps Script）が古いため修復できません。最新の コード.gs に更新してください' : (json.error || '失敗しました'));
+      seen += json.seen; fixed += json.fixed; failed += json.failed;
+      token = json.token || '';
+      busy(true, `写真の公開設定を確認中…（${seen} 枚確認）`);
+    } while (json.left && token);
+    Store.saveSettings({ photoFolderName: json.name });
+    showPhotoFolderNow();
+    toast(failed
+      ? `${seen} 枚中 ${fixed} 枚を修復、${failed} 枚は設定できませんでした（組織の共有設定で制限されている可能性があります）`
+      : `${seen} 枚を確認し、${fixed} 枚の公開設定を修復しました`, !!failed);
+    rerenderCurrent();
   } catch (e) {
     toast('失敗：' + e.message, true);
   } finally {
