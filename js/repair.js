@@ -60,7 +60,7 @@ function renderRepair() {
     const last = mine.length ? `<span class="mdate">${shortDate(mine[0].date)} 修理</span>` : '';
     return `<button class="mcard ${mine.length ? 'done' : ''}" data-rmid="${m.id}">
       <span class="num">${i + 1}</span>${flag}
-      <span class="ico">${m.icon}</span>${m.name}${last}
+      <span class="ico">${esc(m.icon)}</span>${esc(m.name)}${last}
     </button>`;
   }).join('');
   $$('#repMachineGrid .mcard').forEach(b => b.addEventListener('click', () => onPickRepairMachine(b.dataset.rmid)));
@@ -79,9 +79,9 @@ function renderRepairList(reps, sel, emptyMsg) {
     const st = REPAIR_STATUS[r.status];
     const photos = Util.photosOf(r);
     const thumbs = photos.length ? '<div class="photos">' + photos.map((p, k) =>
-      `<button class="pthumb" data-rep-photo="${r.id}" data-k="${k}" title="修理写真${k + 1}">
+      `<button class="pthumb" data-rep-photo="${esc(r.id)}" data-k="${k}" title="修理写真${k + 1}">
         <img src="${Util.photoSrc(p)}" alt="修理写真${k + 1}" loading="lazy"></button>`).join('') + '</div>' : '';
-    return `<div class="rec" data-repid="${r.id}">
+    return `<div class="rec" data-repid="${esc(r.id)}">
       <div class="stat ${st ? st.cls : 'na'}">${st ? st.label[0] : '－'}</div>
       <div class="body">
         <div class="t1">${esc(r.machineName)}${r.unit ? ' ' + esc(r.unit) : ''}${r.part ? '／' + esc(r.part) : ''}</div>
@@ -92,7 +92,7 @@ function renderRepairList(reps, sel, emptyMsg) {
       </div>
       <div class="side">
         ${isViewer() ? '' : `<div class="sync ${r.synced ? '' : 'pend'}">${r.synced ? '送信済' : '未送信'}</div>`}
-        <button class="sharebtn" data-rep-share="${r.id}" aria-label="共有">共有</button>
+        <button class="sharebtn" data-rep-share="${esc(r.id)}" aria-label="共有">共有</button>
       </div>
     </div>`;
   }).join('');
@@ -206,7 +206,7 @@ function openRepairForm(mid, id) {
     };
   }
   const r = repEditing;
-  $('#rfHead').innerHTML = `${m.icon} ${esc(m.name)}<small>${Util.fmtDate(r.date)}　${esc(siteLabel(r))}　修理者：${esc(r.repairer || '－')}</small>`;
+  $('#rfHead').innerHTML = `${esc(m.icon)} ${esc(m.name)}<small>${Util.fmtDate(r.date)}　${esc(siteLabel(r))}　修理者：${esc(r.repairer || '－')}</small>`;
   const sid = r.siteId || Store.siteIdByName(r.site);
   if (sid) $('#rfSite').value = sid;
   $('#rfDate').value = r.date || '';

@@ -246,10 +246,10 @@ function consumeLinkHash() {
     }
     Store.writeAll([]);
     Store.writeRepairs([]);
-    Store.saveSettings({ role: 'viewer', gasUrl: data.g, shareKey: data.k, ownerKey: '', autoSync: true, lastMasterHash: '' });
+    Store.saveSettings({ role: 'viewer', gasUrl: data.g, shareKey: data.k, ownerKey: '', ownerClaimed: false, autoSync: true, lastMasterHash: '' });
     setTimeout(() => toast('共有リンクを開きました（閲覧モード）'), 300);
   } else {
-    Store.saveSettings({ role: 'owner', gasUrl: data.g, ownerKey: data.k, lastMasterHash: '' });
+    Store.saveSettings({ role: 'owner', gasUrl: data.g, ownerKey: data.k, ownerClaimed: false, lastMasterHash: '' });
     setTimeout(() => toast('この端末をオーナーとして登録しました'), 300);
   }
 }
@@ -439,7 +439,7 @@ function renderMachineGrid() {
     const last = recs.length ? `<span class="mdate">${shortDate(recs[0].date)} 実施</span>` : '';
     return `<button class="mcard ${recs.length ? 'done' : ''}" data-mid="${m.id}">
       <span class="num">${i + 1}</span>${flag}
-      <span class="ico">${m.icon}</span>${m.name}${last}
+      <span class="ico">${esc(m.icon)}</span>${esc(m.name)}${last}
     </button>`;
   }).join('');
 
@@ -486,16 +486,18 @@ function onPickMachine(mid) {
 }
 
 /* ---------------- ④ 点検項目フォーム ---------------- */
-function inspectionItemsForMachine(machine, site) {
+function inspectionItemsForMachine(machine, siteId) {
   if (machine.id !== 'm20') return machine.items;
-  if (!DOSING_FLOW_BY_SITE[site]) {
+  // 工場ごとの投入機の構成は「設定 → 投入機の構成」で登録する（端末内にのみ保存）
+  const groups = Store.dosingOf(siteId);
+  if (!groups) {
     return machine.items.map(it => it.name === '流量測定' ? Object.assign({}, it, { unit: '' }) : it);
   }
 
   const flowTemplate = machine.items.find(it => it.name === '流量測定') ||
     { name: '流量測定', type: 'num', unit: '', step: '0.1' };
   const flows = [];
-  DOSING_FLOW_BY_SITE[site].forEach(group => {
+  groups.forEach(group => {
     group.ports.forEach(portLabel => {
       const parts = String(portLabel).trim().split(/\s+/);
       const port = parts.shift();
@@ -551,7 +553,7 @@ function openForm(mid, recId) {
     }
   } else {
     const site = siteName($('#inpSite').value);
-    const inspectionItems = inspectionItemsForMachine(m, site);
+    const inspectionItems = inspectionItemsForMachine(m, $('#inpSite').value);
     editing = {
       id: Util.uuid(),
       date: $('#inpDate').value,
@@ -575,7 +577,7 @@ function openForm(mid, recId) {
     };
   }
   $('#formHead').innerHTML =
-    `${m.icon} ${m.name}<small>${Util.fmtDate(editing.date)}　${esc(editing.site)}　点検者：${esc(editing.inspector || '－')}</small>`;
+    `${esc(m.icon)} ${esc(m.name)}<small>${Util.fmtDate(editing.date)}　${esc(editing.site)}　点検者：${esc(editing.inspector || '－')}</small>`;
   $('#inpUnit').value = editing.unit || '';
   $('#inpNote').value = editing.note || '';
   // 点検場所・点検日は後から修正できる（場所を間違えて入力した場合など）
@@ -690,7 +692,7 @@ function renderItems() {
     const num = it.type === 'num'
       ? `<div class="numrow">
            <input type="number" inputmode="decimal" step="any" placeholder="測定値" value="${esc(it.value)}" data-num="${i}">
-           <span class="unit">${it.unit}</span>
+           <span class="unit">${esc(it.unit)}</span>
          </div>` : '';
     const photos = Util.photosOf(it);
     const photo = editThumbs(photos, `data-delphoto-i="${i}" data-delphoto`);
@@ -926,7 +928,7 @@ function photoStrip(rec) {
 }
 /* サムネイル1枚分（タップで拡大表示） */
 function photoThumb(rid, i, k, kind, p, name, badge) {
-  return `<button class="pthumb" data-photo-rid="${rid}" data-photo-i="${i}" data-photo-k="${k}" data-kind="${kind}" title="${esc(name)}">
+  return `<button class="pthumb" data-photo-rid="${esc(rid)}" data-photo-i="${i}" data-photo-k="${k}" data-kind="${kind}" title="${esc(name)}">
     <img src="${Util.photoSrc(p)}" alt="${esc(name)}" loading="lazy">${badge || ''}</button>`;
 }
 /* サムネイルのタップで拡大表示を開く */
@@ -1124,10 +1126,10 @@ function renderTodo() {
         ${thumbs.length ? `<div class="photos">${thumbs.join('')}</div>` : ''}
         <div class="todobtns">
           ${done
-        ? `<button class="btn ghost sm" data-undo="${r.id}" data-i="${idx}">未対応に戻す</button>`
-        : `<button class="btn primary sm" data-done="${r.id}" data-i="${idx}">対応完了</button>`}
-          <button class="btn ghost sm" data-share="${r.id}">共有</button>
-          <button class="btn ghost sm" data-open="${r.id}">記録を開く</button>
+        ? `<button class="btn ghost sm" data-undo="${esc(r.id)}" data-i="${idx}">未対応に戻す</button>`
+        : `<button class="btn primary sm" data-done="${esc(r.id)}" data-i="${idx}">対応完了</button>`}
+          <button class="btn ghost sm" data-share="${esc(r.id)}">共有</button>
+          <button class="btn ghost sm" data-open="${esc(r.id)}">記録を開く</button>
         </div>
       </div>
     </div>`;
@@ -1317,7 +1319,7 @@ function renderHistory() {
     const ng = (r.items || []).filter(i => i.judge === 'NG' || i.judge === 'CAUTION');
     const issue = ng.length
       ? `<div class="t3">要対応：${ng.map(i => esc(i.name) + (i.judge === 'NG' ? '(不良)' : '(注意)')).join('、')}</div>` : '';
-    return `<div class="rec" data-rid="${r.id}">
+    return `<div class="rec" data-rid="${esc(r.id)}">
       <div class="stat ${JUDGE[r.status].cls}">${JUDGE[r.status].label[0]}</div>
       <div class="body">
         <div class="t1">${esc(r.machineName)}${r.unit ? ' ' + esc(r.unit) : ''}</div>
@@ -1328,7 +1330,7 @@ function renderHistory() {
       </div>
       <div class="side">
         <div class="sync ${r.synced ? '' : 'pend'}">${r.synced ? '送信済' : '未送信'}</div>
-        <button class="sharebtn" data-share="${r.id}" aria-label="共有">共有</button>
+        <button class="sharebtn" data-share="${esc(r.id)}" aria-label="共有">共有</button>
       </div>
     </div>`;
   }).join('');
@@ -1449,7 +1451,7 @@ function renderDash() {
       const cls = (st === 'NG' || st === 'CAUTION') ? JUDGE[st].cls : 'pending';
       return `<td class="${cls}">${mark}</td>`;
     }).join('');
-    return `<tr><th>${m.name}</th>${tds}</tr>`;
+    return `<tr><th>${esc(m.name)}</th>${tds}</tr>`;
   }).join('');
   $('#dashMatrix').innerHTML = head + '<tbody>' + body + '</tbody>';
 
@@ -1469,7 +1471,7 @@ function renderDash() {
         ${photo}
       </div>
       <div class="side">
-        <button class="sharebtn" data-share="${r.id}" aria-label="共有">共有</button>
+        <button class="sharebtn" data-share="${esc(r.id)}" aria-label="共有">共有</button>
       </div>
     </div>`;
   }).join('') : '<p class="empty">不良・要注意はありません</p>';
@@ -1519,6 +1521,27 @@ function renderSiteEditor() {
     renderSiteOptions(); renderSiteEditor(); renderTargetEditor();
     toast('点検場所を追加しました。名称を入力してください');
   });
+  renderDosingEditor();
+}
+
+/* 投入機の構成（工場ごとの投入機番号とP番号）。内容は端末内にのみ保存されます */
+function renderDosingEditor() {
+  const box = $('#dosingEditor');
+  if (!box) return;
+  box.innerHTML = Store.sites().map(s => {
+    const list = Store.dosingOf(s.id);
+    return `<details class="dosingedit"${list ? ' open' : ''}>
+      <summary>${esc(s.name)}（${list ? list.length + '台' : '未登録'}）</summary>
+      <textarea data-dosing="${esc(s.id)}" rows="4" placeholder="1番: P1, P2, P3">${esc(Store.dosingToText(list))}</textarea>
+    </details>`;
+  }).join('');
+  $$('#dosingEditor textarea').forEach(ta => ta.addEventListener('change', () => {
+    const list = Store.parseDosing(ta.value);
+    if (ta.value.trim() && !list.length) return toast('「1番: P1, P2, P3」の形式で入力してください', true);
+    Store.saveDosing(ta.dataset.dosing, list);
+    renderDosingEditor();
+    toast(list.length ? `投入機の構成を保存しました（${list.length}台）` : '投入機の構成を削除しました');
+  }));
 }
 
 /* 点検対象設定（場所ごとに設置されている機械） */
@@ -1771,7 +1794,7 @@ function saveSettings() {
     autoSync: $('#setAutoSync').checked
   });
   // 別のスプレッドシートに変えた場合、共有の鍵は前のシートのものなので消す
-  if (urlChanged) Store.saveSettings({ lastMasterHash: '', lastMasterTargets: 0, ownerKey: '', shareKey: '' });
+  if (urlChanged) Store.saveSettings({ lastMasterHash: '', lastMasterTargets: 0, ownerKey: '', shareKey: '', ownerClaimed: false });
   $('#inpInspector').value = $('#setInspector').value.trim();
   toast('設定を保存しました');
 }
@@ -1781,7 +1804,8 @@ async function testConnection() {
   if (!url) return toast('URLを入力してください', true);
   busy(true, '接続確認中…');
   try {
-    const res = await fetch(url + '?action=ping');
+    // 鍵を付けると、権限のある端末にだけスプレッドシート名が返る
+    const res = await fetch(url + '?action=ping&key=' + encodeURIComponent(Store.authKey()));
     const j = await res.json();
     toast(j.ok ? `接続OK：${j.sheetName || 'スプレッドシート'}` : '接続失敗', !j.ok);
   } catch (e) {
@@ -1797,6 +1821,7 @@ function exportJson() {
     settings: Store.settings(),
     sites: Store.sites(),
     targets: Store.targets(),
+    dosing: Store.dosing(),
     records: Store.records(),
     repairs: Store.repairs()
   }, null, 2)], { type: 'application/json' });

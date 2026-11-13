@@ -476,20 +476,47 @@ function getSheet_(ss, name, head) {
 /* ============ 共有と権限 ============
    オーナー鍵：点検記録の保存・設定の同期・共有設定ができる（アプリの持ち主）
    共有鍵　　：閲覧と「要対応」の操作（対応完了・未対応に戻す）だけができる（共有された人）
-   鍵はスクリプトプロパティに保存する。共有を開始するまで（オーナー鍵が未設定の間）は従来どおり誰でも操作できる。 */
+   鍵はスクリプトプロパティに保存する。オーナー鍵はアプリが最初の通信で自動登録する。
+   オーナー鍵が未登録の間は、鍵の登録以外の操作（記録の読み書き）を一切受け付けない
+   （連携URLを知っているだけの人に記録を読まれたり書き換えられたりしないため）。 */
 function keys_() {
   var p = PropertiesService.getScriptProperties();
   return { owner: p.getProperty('OWNER_KEY') || '', share: p.getProperty('SHARE_KEY') || '' };
 }
 function isOwner_(key) {
   var k = keys_();
-  return !k.owner || key === k.owner;
+  return !!k.owner && String(key || '') === k.owner;
 }
 function canView_(key) {
   var k = keys_();
-  return !k.owner || key === k.owner || (!!k.share && key === k.share);
+  key = String(key || '');
+  return !!k.owner && (key === k.owner || (!!k.share && key === k.share));
 }
 var DENIED = { ok: false, denied: true, error: 'この操作の権限がありません（共有リンクでは要対応の操作のみ行えます）' };
+
+/* オーナー鍵を登録する（未登録のときだけ）。登録済みなら同じ鍵かどうかを確かめる。共有鍵は発行しない。 */
+function claimOwner_(body) {
+  var k = keys_();
+  var ownerKey = String(body.ownerKey || '');
+  if (!/^[A-Za-z0-9]{40,128}$/.test(ownerKey)) return { ok: false, error: 'オーナー鍵が不正です' };
+  if (k.owner) return ownerKey === k.owner ? { ok: true } : DENIED;
+  PropertiesService.getScriptProperties().setProperty('OWNER_KEY', ownerKey);
+  return { ok: true };
+}
+
+/* セルに書き込む文字が数式として実行されないようにする。
+   = + - @ で始まる文字（数値を除く）は先頭に ' を付けて文字として保存する（' は表示されず、読み出し時にも付かない）。 */
+function cell_(v) {
+  if (typeof v !== 'string' || !v) return v;
+  if (/^[=+\-@\t\r]/.test(v) && !/^[+-]?\d+(\.\d+)?$/.test(v)) return "'" + v;
+  return v;
+}
+function cells_(row) { return row.map(cell_); }
+
+/* 写真URLはこのアプリが保存したドライブのURLだけを受け付ける（細工したURLを画面に埋め込ませない） */
+function isDriveUrl_(u) {
+  return /^https:\/\/drive\.google\.com\/file\/d\/[A-Za-z0-9_-]{10,}\/view$/.test(String(u || ''));
+}
 
 /* 共有を開始する／共有リンクの鍵を作り直す（オーナーのみ）。
    初回はアプリが作ったオーナー鍵を登録し、共有鍵を発行する。 */
@@ -497,7 +524,7 @@ function setupShare_(body) {
   var p = PropertiesService.getScriptProperties();
   var k = keys_();
   var ownerKey = String(body.ownerKey || '');
-  if (ownerKey.length < 20) return { ok: false, error: 'オーナー鍵が不正です' };
+  if (!/^[A-Za-z0-9]{40,128}$/.test(ownerKey)) return { ok: false, error: 'オーナー鍵が不正です' };
   if (k.owner && ownerKey !== k.owner) return DENIED;
   if (!k.owner) p.setProperty('OWNER_KEY', ownerKey);
   var share = k.share;
@@ -509,12 +536,13 @@ function setupShare_(body) {
 }
 
 /* 共有をやめる／オーナー鍵を失くした場合に、Apps Script の画面から手動で実行する。
-   鍵をすべて削除し、共有リンクは使えなくなる（従来どおり誰でも操作できる状態に戻る）。 */
+   鍵をすべて削除し、共有リンクは使えなくなる。次にアプリから同期した端末が新しいオーナーとして登録される
+   （それまでは誰も記録を読み書きできない）。実行後はすぐにオーナーの端末で「今すぐ同期」を押すこと。 */
 function 共有をリセット() {
   var p = PropertiesService.getScriptProperties();
   p.deleteProperty('OWNER_KEY');
   p.deleteProperty('SHARE_KEY');
-  Logger.log('共有をリセットしました。アプリの設定タブから、もう一度「共有を開始」してください。');
+  Logger.log('共有をリセットしました。オーナーの端末で「今すぐ同期」を押してから、設定タブで「共有を開始」してください。');
 }
 
 function doPost(e) {
@@ -522,6 +550,7 @@ function doPost(e) {
   try {
     lock.waitLock(120000);
     var body = JSON.parse(e.postData.contents);
+    if (body.action === 'claimOwner') return json_(claimOwner_(body));
     if (body.action === 'setupShare') return json_(setupShare_(body));
     if (body.action === 'syncMaster') return json_(isOwner_(body.key) ? syncTargetMaster_(body.master) : DENIED);
     if (body.action === 'save') return json_(isOwner_(body.key) ? saveRecord_(body.record, body.refresh !== false) : DENIED);
@@ -556,7 +585,7 @@ function syncTargetMaster_(master) {
     });
   });
   if (sh.getLastRow() > 1) sh.getRange(2, 1, sh.getLastRow() - 1, TARGET_HEAD.length).clearContent();
-  if (rows.length) sh.getRange(2, 1, rows.length, TARGET_HEAD.length).setValues(rows);
+  if (rows.length) sh.getRange(2, 1, rows.length, TARGET_HEAD.length).setValues(rows.map(cells_));
   safe_(function () {
     sh.getRange('A1:F1').setBackground('#0f4c81').setFontColor('#ffffff').setFontWeight('bold');
     sh.autoResizeColumns(1, TARGET_HEAD.length);
@@ -642,6 +671,7 @@ function saveRecord_(rec, refresh) {
     rec.createdAt ? new Date(rec.createdAt) : now, now];
 
   // 既存行があれば上書き（再送・修正に対応）
+  row = cells_(row);
   var idx = findRow_(recSh, rec.id);
   if (idx > 0) recSh.getRange(idx, 1, 1, row.length).setValues([row]);
   else recSh.appendRow(row);
@@ -663,7 +693,7 @@ function saveRecord_(rec, refresh) {
         it.originalJudge ? (JUDGE_LABEL[it.originalJudge] || '') : '', it.resolvedCause || '',
         dosing.machine, dosing.port, dosing.chemical];
     });
-    detSh.getRange(detSh.getLastRow() + 1, 1, detRows.length, DET_HEAD.length).setValues(detRows);
+    detSh.getRange(detSh.getLastRow() + 1, 1, detRows.length, DET_HEAD.length).setValues(detRows.map(cells_));
   }
 
   // 投入機の測定値は専用シートにも工場・投入機・P番号別で保存する。
@@ -677,14 +707,14 @@ function saveRecord_(rec, refresh) {
       rec.inspector || '', now]);
   });
   if (dosingRows.length) {
-    dosingSh.getRange(dosingSh.getLastRow() + 1, 1, dosingRows.length, DOSING_HEAD.length).setValues(dosingRows);
+    dosingSh.getRange(dosingSh.getLastRow() + 1, 1, dosingRows.length, DOSING_HEAD.length).setValues(dosingRows.map(cells_));
   }
   if (refresh !== false) refreshDashboard_(ss);
   return { ok: true, id: rec.id, photoUrls: photoUrls, kept: kept, updatedAt: now.toISOString() };
 }
 
 /* 投入機の工場別測定項目を列に分けて保存する。
-   古い記録は項目名（例：4番 P2 助剤B 流量測定）から復元する。 */
+   古い記録は項目名（例：4番 P2 洗剤A 流量測定）から復元する。 */
 function dosingInfo_(it) {
   if (it.dosingMachine || it.dosingPort || it.chemical) {
     return { machine: it.dosingMachine || '', port: it.dosingPort || '', chemical: it.chemical || '' };
@@ -736,15 +766,15 @@ function savePhotoList_(list, nameParts, onSaved) {
       var p = savePhoto_(ph.photo, nameParts.concat([slot + 1]).join('_'));
       urls.push(p.url);
       onSaved(slot, p);
-    } else if (ph.photoUrl) {
-      urls.push(ph.photoUrl);
+    } else if (isDriveUrl_(ph.photoUrl)) {
+      urls.push(String(ph.photoUrl));
     }
   });
   return urls;
 }
 /* シートの写真列（改行区切りのURL）を写真一覧に戻す */
 function urlsToPhotos_(cell) {
-  return String(cell || '').split(/\r?\n/).filter(function (u) { return u.trim(); })
+  return String(cell || '').split(/\r?\n/).filter(function (u) { return isDriveUrl_(u.trim()); })
     .map(function (u) { return { photo: '', photoUrl: u.trim() }; });
 }
 
@@ -771,7 +801,8 @@ function doGet(e) {
   var p = (e && e.parameter) || {};
   try {
     if (p.action === 'ping') {
-      return json_({ ok: true, sheetName: SpreadsheetApp.getActiveSpreadsheet().getName() });
+      // スプレッドシート名は、鍵を持つ端末にだけ返す
+      return json_({ ok: true, sheetName: canView_(p.key) ? SpreadsheetApp.getActiveSpreadsheet().getName() : '' });
     }
     if (p.action === 'list') {
       if (!canView_(p.key)) return json_(DENIED);
@@ -897,7 +928,7 @@ function resolveItems_(body) {
       row[16] = ''; row[17] = ''; row[18] = ''; row[19] = ''; row[20] = ''; row[21] = '';
     }
     row[14] = now;
-    detSh.getRange(rowIdx + 2, 1, 1, DET_HEAD.length).setValues([row]);
+    detSh.getRange(rowIdx + 2, 1, 1, DET_HEAD.length).setValues([cells_(row)]);
     applied++;
   });
   if (!applied) return { ok: false, error: '対象の点検項目がスプレッドシートで見つかりません' };
@@ -910,7 +941,7 @@ function resolveItems_(body) {
   recInfo[9] = countOf('要注意');
   recInfo[10] = countOf('未判定');
   recInfo[13] = now;
-  recSh.getRange(recRow, 1, 1, REC_HEAD.length).setValues([recInfo]);
+  recSh.getRange(recRow, 1, 1, REC_HEAD.length).setValues([cells_(recInfo)]);
   refreshDashboard_(ss);
   return { ok: true, photoUrls: photoUrls, updatedAt: now.toISOString() };
 }
@@ -945,6 +976,7 @@ function saveRepair_(rep) {
     rep.unit || '', rep.repairer || '', rep.part || '', rep.symptom || '', rep.cause || '', rep.work || '',
     rep.parts || '', REPAIR_STATUS[rep.status] || '', urls.join('\n'), rep.note || '',
     rep.createdAt ? new Date(rep.createdAt) : now, now, rep.siteId || '', rep.machineId || ''];
+  row = cells_(row);
   var idx = findRow_(sh, rep.id);
   if (idx > 0) sh.getRange(idx, 1, 1, row.length).setValues([row]);
   else sh.appendRow(row);

@@ -10,7 +10,7 @@
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <link rel="icon" href="icons/icon-192.png">
-<link rel="stylesheet" href="css/style.css?v=20261010">
+<link rel="stylesheet" href="css/style.css?v=20261113">
 <title>工場点検アプリ</title>
 </head>
 <body>
@@ -371,6 +371,14 @@
     </div>
 
     <div class="card owner-only">
+      <h2 class="sect first">投入機の構成</h2>
+      <p class="hint">工場ごとに、投入機1台を1行で「投入機番号: P番号（＋洗剤・助剤名）」の形で入力してください。<br>
+        例）<code>1番: P1, P2, P3</code>　<code>4番: P1 洗剤A, P2 助剤B</code><br>
+        登録した工場では、投入機の点検でP番号ごとの流量入力欄が表示されます。未登録の工場は「流量測定」1欄です。内容はこの端末内にのみ保存されます。</p>
+      <div id="dosingEditor"></div>
+    </div>
+
+    <div class="card owner-only">
       <h2 class="sect first">点検機械・点検項目の編集</h2>
       <p class="hint">点検機械の追加・変更や、機械ごとの点検項目の追加・変更ができます。</p>
       <button id="btnOpenMaster" class="btn ghost" style="width:100%">編集画面を開く</button>
@@ -452,9 +460,9 @@
 <div id="overlay" class="overlay hidden"><div class="spinner"></div><span id="overlayText"></span></div>
 
 <!-- ?v= はアプリ更新時に変える。画面と古いプログラムが組み合わさって動かなくなるのを防ぐため -->
-<script src="js/data.js?v=20261010"></script>
-<script src="js/store.js?v=20261010"></script>
-<script src="js/app.js?v=20261010"></script>
-<script src="js/repair.js?v=20261010"></script>
+<script src="js/data.js?v=20261113"></script>
+<script src="js/store.js?v=20261113"></script>
+<script src="js/app.js?v=20261113"></script>
+<script src="js/repair.js?v=20261113"></script>
 </body>
 </html>

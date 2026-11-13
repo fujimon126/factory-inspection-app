@@ -8,6 +8,7 @@ const LS_TARGETS = 'fi_targets_v1';
 const LS_SITES = 'fi_sites_v1';
 const LS_MACHINES = 'fi_machines_v1';
 const LS_REPAIRS = 'fi_repairs_v1';
+const LS_DOSING = 'fi_dosing_v1';
 
 const Store = {
   /* ---------- 設定 ---------- */
@@ -42,6 +43,36 @@ const Store = {
     localStorage.setItem(LS_SITES, JSON.stringify(list));
     window.dispatchEvent(new Event('masterchange'));
   },
+  /* ---------- 投入機の構成（工場ごと。端末内にのみ保存） ----------
+     { 場所ID: [{ machine: '1番', ports: ['P1', 'P2 薬剤名'] }] } */
+  dosing() {
+    try {
+      const d = JSON.parse(localStorage.getItem(LS_DOSING) || '{}');
+      return d && typeof d === 'object' ? d : {};
+    } catch (e) { return {}; }
+  },
+  dosingOf(siteId) {
+    const list = this.dosing()[siteId];
+    return Array.isArray(list) && list.length ? list : null;
+  },
+  saveDosing(siteId, list) {
+    const d = this.dosing();
+    if (list && list.length) d[siteId] = list; else delete d[siteId];
+    localStorage.setItem(LS_DOSING, JSON.stringify(d));
+  },
+  // 「1番: P1, P2, P3」形式（1行に投入機1台）の文字列と相互に変換する
+  dosingToText(list) {
+    return (list || []).map(g => g.machine + ': ' + (g.ports || []).join(', ')).join('\n');
+  },
+  parseDosing(text) {
+    return String(text || '').split(/\r?\n/).map(line => {
+      const m = /^\s*([^:：]+)[:：](.*)$/.exec(line);
+      if (!m) return null;
+      const ports = m[2].split(/[,、，]/).map(x => x.trim().replace(/\s+/g, ' ')).filter(Boolean);
+      return ports.length ? { machine: m[1].trim(), ports } : null;
+    }).filter(Boolean);
+  },
+
   siteName(id) {
     const s = this.sites().find(x => x.id === id);
     return s ? s.name : '';
@@ -306,9 +337,7 @@ const Store = {
     if (!s.gasUrl) throw new Error('先にスプレッドシート連携URLを設定してください');
     let ownerKey = s.ownerKey;
     if (!ownerKey) {
-      const a = new Uint8Array(24);
-      crypto.getRandomValues(a);
-      ownerKey = Array.from(a, b => b.toString(16).padStart(2, '0')).join('');
+      ownerKey = this.newKey();
       // 送信前に保存しておく。スプレッドシート側で登録されたのに応答だけ届かなかった場合も、
       // もう一度押せば同じ鍵で送られるので「オーナーではない」と拒否されない
       this.saveSettings({ ownerKey });
@@ -317,8 +346,32 @@ const Store = {
     if (!json.ok) throw new Error(json.denied
       ? '共有はすでに別の端末（またはブラウザ）で開始されています。その端末の設定タブにある「オーナー用リンク」をこの端末で開いてください。わからない場合は Apps Script で「共有をリセット」を実行してから、もう一度押してください'
       : (json.error || '共有の設定に失敗しました'));
-    this.saveSettings({ ownerKey, shareKey: json.shareKey });
+    this.saveSettings({ ownerKey, shareKey: json.shareKey, ownerClaimed: true });
     return json.shareKey;
+  },
+
+  newKey() {
+    const a = new Uint8Array(24);
+    crypto.getRandomValues(a);
+    return Array.from(a, b => b.toString(16).padStart(2, '0')).join('');
+  },
+
+  // オーナー鍵をスプレッドシート側へ登録する（未登録のときだけ）。
+  // 鍵を登録するまでスプレッドシートは読み書きを受け付けないため、連携URLを知っているだけの人は操作できない。
+  async ensureOwner() {
+    const s = this.settings();
+    if (s.role === 'viewer' || s.ownerClaimed || !s.gasUrl) return;
+    let ownerKey = s.ownerKey;
+    if (!ownerKey) {
+      ownerKey = this.newKey();
+      this.saveSettings({ ownerKey });   // 応答が届かなかった場合も同じ鍵で送り直せるよう先に保存
+    }
+    let json = await this.post(s.gasUrl, { action: 'claimOwner', ownerKey });
+    // 更新前の Apps Script は claimOwner を知らないので、従来の登録方法で鍵だけ登録する
+    if (!json.ok && !json.denied) json = await this.post(s.gasUrl, { action: 'setupShare', ownerKey });
+    if (json.denied) throw new Error('このスプレッドシートは別の端末（またはブラウザ）がオーナーとして登録済みです。その端末の設定タブにある「オーナー用リンク」をこの端末で開いてください。わからない場合は Apps Script で「共有をリセット」を実行してください');
+    if (!json.ok) throw new Error(json.error || 'オーナー鍵の登録に失敗しました');
+    this.saveSettings({ ownerClaimed: true });
   },
 
   // 送信結果の「何枚目か」とずれないよう、写真一覧をそのままの並びで取り出す
@@ -335,6 +388,8 @@ const Store = {
   // GASへPOSTする。text/plain にすると CORS プリフライトを回避できる（GAS 側で JSON.parse）。
   // 応答が無いまま画面が固まらないよう、90秒で時間切れにする。
   async post(url, body) {
+    const setup = body.action === 'setupShare' || body.action === 'claimOwner';
+    if (!setup) await this.ensureOwner();
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 90000);
     try {
@@ -345,7 +400,7 @@ const Store = {
         signal: ctrl.signal
       });
       const json = await res.json();
-      if (json && json.denied && body.action !== 'setupShare') {
+      if (json && json.denied && !setup) {
         throw new Error(this.isViewer()
           ? '共有リンクでは要対応の操作のみ行えます'
           : 'スプレッドシートの共有が開始されていますが、この端末にオーナー鍵がありません。設定タブの「オーナー用リンク」をこの端末で開いてください');
@@ -362,6 +417,7 @@ const Store = {
   async pull(ym) {
     const s = this.settings();
     if (!s.gasUrl) throw new Error('スプレッドシートの連携URLが未設定です（設定タブ）');
+    await this.ensureOwner();
     const url = s.gasUrl + '?action=list&ym=' + encodeURIComponent(ym || '') +
       '&key=' + encodeURIComponent(this.authKey());
     const ctrl = new AbortController();
@@ -508,18 +564,23 @@ const Util = {
   hasPhoto(it) { return this.photosOf(it).length > 0; },
   // ドライブのファイルIDを取り出す（URLからも復元できるようにする）
   photoId(p) {
-    if (p.photoId) return p.photoId;
-    const m = /\/d\/([^/?]+)/.exec(p.photoUrl || '');
-    return m ? m[1] : '';
+    // ドライブのファイルIDに使われる文字だけを通す（画面に埋め込むため、それ以外は写真なしとして扱う）
+    const ok = v => /^[A-Za-z0-9_-]{10,}$/.test(String(v || ''));
+    if (ok(p.photoId)) return p.photoId;
+    const m = /^https:\/\/drive\.google\.com\/file\/d\/([A-Za-z0-9_-]+)(?:[/?#]|$)/.exec(p.photoUrl || '');
+    return m && ok(m[1]) ? m[1] : '';
   },
   // 一覧に並べる縮小画像（写真1枚分）。未送信なら端末内の画像、送信済みならドライブの縮小版
   photoSrc(p) {
-    if (p.photo) return p.photo;
+    if (p.photo) return /^data:image\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]+$/.test(p.photo) ? p.photo : '';
     const id = this.photoId(p);
     return id ? 'https://drive.google.com/thumbnail?id=' + id + '&sz=w600' : '';
   },
   // 共有・拡大表示に使うリンク（写真1枚分、送信後のみ）
-  photoLink(p) { return p.photoUrl || ''; },
+  photoLink(p) {
+    const id = /^https:\/\/drive\.google\.com\//.test(p.photoUrl || '') ? this.photoId({ photoUrl: p.photoUrl }) : '';
+    return id ? 'https://drive.google.com/file/d/' + id + '/view' : '';
+  },
   // 端末内の画像を共有用のファイルに変換する
   dataUrlToFile(dataUrl, name) {
     try {
@@ -549,7 +610,9 @@ const Util = {
     return 'NA';
   },
   csvEscape(v) {
-    const s = String(v == null ? '' : v);
+    let s = String(v == null ? '' : v);
+    // 表計算ソフトで数式として実行されないよう、= + - @ で始まる文字（数値を除く）は文字列にする
+    if (/^[=+\-@\t\r]/.test(s) && !/^[+-]?\d+(\.\d+)?$/.test(s)) s = "'" + s;
     return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
   }
 };

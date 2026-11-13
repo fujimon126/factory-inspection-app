@@ -334,3 +334,6 @@ body.viewer #view-rform .thumb button{display:none}
   .mrow .mname{flex:1 1 auto}
   .mrow .mtype{margin-left:0}
 }
+.dosingedit{margin-bottom:8px}
+.dosingedit summary{font-weight:600;padding:6px 2px;cursor:pointer}
+.dosingedit textarea{width:100%;box-sizing:border-box;font-size:14px;line-height:1.5}
