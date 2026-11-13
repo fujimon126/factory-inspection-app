@@ -10,7 +10,7 @@
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <link rel="icon" href="icons/icon-192.png">
-<link rel="stylesheet" href="css/style.css?v=20261113">
+<link rel="stylesheet" href="css/style.css?v=20261113b">
 <title>工場点検アプリ</title>
 </head>
 <body>
@@ -365,6 +365,23 @@
     </div>
 
     <div class="card owner-only">
+      <h2 class="sect first">写真の保存先</h2>
+      <p class="hint">写真を保存するGoogleドライブのフォルダを変更できます。保存先にしたいフォルダをドライブで開き、
+        アドレスバーのURLを貼り付けてください（スプレッドシートの持ち主のアカウントで編集できるフォルダ）。
+        初期の保存先はマイドライブ直下の「工場点検_写真」です。</p>
+      <p class="hint" id="photoFolderNow"></p>
+      <div class="field">
+        <label for="setPhotoFolder">新しい保存先フォルダのURL</label>
+        <input type="url" id="setPhotoFolder" placeholder="https://drive.google.com/drive/folders/...">
+      </div>
+      <label class="check"><input type="checkbox" id="setPhotoMove" checked> これまでの写真も新しい保存先へ移動する（写真のURLは変わりません）</label>
+      <div class="actionbar inline">
+        <button id="btnPhotoFolderCheck" class="btn ghost">現在の保存先を確認</button>
+        <button id="btnPhotoFolderSave" class="btn primary">保存先を変更</button>
+      </div>
+    </div>
+
+    <div class="card owner-only">
       <h2 class="sect first">点検場所の登録</h2>
       <p class="hint">実際の工場名を入力してください。名称はこの端末内にのみ保存されます（アプリのプログラムには含まれません）。</p>
       <div id="siteEditor"></div>
@@ -460,9 +477,9 @@
 <div id="overlay" class="overlay hidden"><div class="spinner"></div><span id="overlayText"></span></div>
 
 <!-- ?v= はアプリ更新時に変える。画面と古いプログラムが組み合わさって動かなくなるのを防ぐため -->
-<script src="js/data.js?v=20261113"></script>
-<script src="js/store.js?v=20261113"></script>
-<script src="js/app.js?v=20261113"></script>
-<script src="js/repair.js?v=20261113"></script>
+<script src="js/data.js?v=20261113b"></script>
+<script src="js/store.js?v=20261113b"></script>
+<script src="js/app.js?v=20261113b"></script>
+<script src="js/repair.js?v=20261113b"></script>
 </body>
 </html>

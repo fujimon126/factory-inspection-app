@@ -163,6 +163,8 @@ function init() {
   on('#btnVwExit', 'click', exitViewer);
   on('#btnSaveSettings', 'click', saveSettings);
   on('#btnTest', 'click', testConnection);
+  on('#btnPhotoFolderCheck', 'click', () => photoFolder(false));
+  on('#btnPhotoFolderSave', 'click', () => photoFolder(true));
   on('#btnExportJson', 'click', exportJson);
   on('#btnClearSynced', 'click', clearSynced);
 
@@ -1762,6 +1764,7 @@ function renderSettings() {
   $('#setGas').value = s.gasUrl || '';
   $('#setInspector').value = s.inspector || '';
   $('#setAutoSync').checked = !!s.autoSync;
+  showPhotoFolderNow();
 
   renderSiteEditor();
   renderTargetEditor();
@@ -1794,7 +1797,7 @@ function saveSettings() {
     autoSync: $('#setAutoSync').checked
   });
   // 別のスプレッドシートに変えた場合、共有の鍵は前のシートのものなので消す
-  if (urlChanged) Store.saveSettings({ lastMasterHash: '', lastMasterTargets: 0, ownerKey: '', shareKey: '', ownerClaimed: false });
+  if (urlChanged) Store.saveSettings({ lastMasterHash: '', lastMasterTargets: 0, ownerKey: '', shareKey: '', ownerClaimed: false, photoFolderName: '' });
   $('#inpInspector').value = $('#setInspector').value.trim();
   toast('設定を保存しました');
 }
@@ -1810,6 +1813,43 @@ async function testConnection() {
     toast(j.ok ? `接続OK：${j.sheetName || 'スプレッドシート'}` : '接続失敗', !j.ok);
   } catch (e) {
     toast('接続失敗：URLとデプロイ設定（全員がアクセス可）を確認してください', true);
+  } finally {
+    busy(false);
+  }
+}
+
+/* 写真の保存先（Googleドライブのフォルダ）を確認・変更する。
+   フォルダの場所はスプレッドシート側に保存され、この端末には表示用のフォルダ名だけを覚えておく。 */
+function showPhotoFolderNow() {
+  const name = Store.settings().photoFolderName;
+  $('#photoFolderNow').textContent = name ? `現在の保存先：${name}` : '';
+}
+async function photoFolder(change) {
+  const s = Store.settings();
+  if (!s.gasUrl) return toast('先にスプレッドシート連携のURLを設定してください', true);
+  const url = $('#setPhotoFolder').value.trim();
+  const move = change && $('#setPhotoMove').checked;
+  if (change && !url) return toast('保存先フォルダのURLを貼り付けてください', true);
+  busy(true, change ? '保存先を変更中…' : '保存先を確認中…');
+  try {
+    let json = await Store.post(s.gasUrl, { action: 'photoFolder', url: change ? url : '', move });
+    if (!json.ok) throw new Error(json.error === '不明なアクションです'
+      ? 'スプレッドシート側のプログラム（Apps Script）が古いため変更できません。最新の コード.gs に更新してください' : (json.error || '失敗しました'));
+    Store.saveSettings({ photoFolderName: json.name });
+    showPhotoFolderNow();
+    // 写真が多いと一度では移動しきれないので、残りが無くなるまで続きを依頼する
+    let moved = json.moved || 0;
+    while (move && json.left) {
+      busy(true, `写真を移動中…（${moved} 枚完了）`);
+      json = await Store.post(s.gasUrl, { action: 'photoFolder', move: true });
+      if (!json.ok) throw new Error(json.error || '写真の移動に失敗しました');
+      if (!json.moved && json.left) throw new Error('移動できない写真が残っています。ドライブで確認してください');
+      moved += json.moved || 0;
+    }
+    if (change) $('#setPhotoFolder').value = '';
+    toast(change ? `保存先を「${json.name}」に変更しました${move ? `（写真 ${moved} 枚を移動）` : ''}` : `現在の保存先：${json.name}`);
+  } catch (e) {
+    toast('失敗：' + e.message, true);
   } finally {
     busy(false);
   }

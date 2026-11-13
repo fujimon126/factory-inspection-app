@@ -1,5 +1,5 @@
 /* オフライン動作用 Service Worker（アプリ本体をキャッシュ） */
-const CACHE = 'factory-inspection-v4';
+const CACHE = 'factory-inspection-v5';
 const ASSETS = [
   './',
   './index.html',

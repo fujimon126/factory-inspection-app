@@ -556,6 +556,7 @@ function doPost(e) {
     if (body.action === 'save') return json_(isOwner_(body.key) ? saveRecord_(body.record, body.refresh !== false) : DENIED);
     if (body.action === 'resolve') return json_(canView_(body.key) ? resolveItems_(body) : DENIED);
     if (body.action === 'saveRepair') return json_(isOwner_(body.key) ? saveRepair_(body.repair) : DENIED);
+    if (body.action === 'photoFolder') return json_(isOwner_(body.key) ? photoFolderAction_(body) : DENIED);
     if (body.action === 'deleteRepair') return json_(isOwner_(body.key) ? deleteRepair_(body.id) : DENIED);
     return json_({ ok: false, error: '不明なアクションです' });
   } catch (err) {
@@ -778,13 +779,86 @@ function urlsToPhotos_(cell) {
     .map(function (u) { return { photo: '', photoUrl: u.trim() }; });
 }
 
+/* ============ 写真の保存先 ============
+   保存先はアプリの「設定 → 写真の保存先」で変更できる（フォルダIDはスクリプトプロパティに保存し、コードには書かない）。
+   未設定、または指定したフォルダを開けない場合は、マイドライブ直下の「工場点検_写真」に保存する。 */
+function photoFolder_() {
+  var id = PropertiesService.getScriptProperties().getProperty('PHOTO_FOLDER_ID');
+  if (id) {
+    try {
+      var f = DriveApp.getFolderById(id);
+      if (!f.isTrashed()) return f;
+    } catch (e) {
+      Logger.log('指定された写真の保存先を開けないため、既定のフォルダを使います: ' + e);
+    }
+  }
+  var folders = DriveApp.getFoldersByName(PHOTO_FOLDER);
+  return folders.hasNext() ? folders.next() : DriveApp.createFolder(PHOTO_FOLDER);
+}
+
+/* フォルダのURL（またはID）からフォルダIDを取り出す */
+function folderIdOf_(s) {
+  s = String(s || '').trim();
+  var m = /\/folders\/([A-Za-z0-9_-]{10,})/.exec(s) || /[?&]id=([A-Za-z0-9_-]{10,})/.exec(s) ||
+    /^([A-Za-z0-9_-]{20,})$/.exec(s);
+  return m ? m[1] : '';
+}
+
+/* 写真の保存先を確認・変更する（オーナーのみ）。
+   body.url  … 新しい保存先フォルダのURL（省略時は現在の保存先を返すだけ）
+   body.move … true なら、変更前の保存先にある写真を新しい保存先へ移動する。
+               一度に移動しきれない場合は left:true を返すので、アプリが続きを繰り返し依頼する。
+               移動しても写真のURLは変わらない。 */
+function photoFolderAction_(body) {
+  var p = PropertiesService.getScriptProperties();
+  var cur = photoFolder_();
+  if (body.url) {
+    var id = folderIdOf_(body.url);
+    if (!id) return { ok: false, error: 'フォルダのURLを読み取れません。Googleドライブでフォルダを開き、アドレスバーのURLを貼り付けてください' };
+    var dest;
+    try {
+      dest = DriveApp.getFolderById(id);
+      if (dest.isTrashed()) return { ok: false, error: 'このフォルダはゴミ箱に入っています' };
+    } catch (e) {
+      return { ok: false, error: 'このフォルダを開けません。スプレッドシートの持ち主のGoogleアカウントで編集できるフォルダを指定してください' };
+    }
+    if (dest.getId() !== cur.getId()) {
+      p.setProperty('PHOTO_FOLDER_PREV', cur.getId());
+      p.setProperty('PHOTO_FOLDER_ID', dest.getId());
+      cur = dest;
+    }
+  }
+  var out = { ok: true, name: cur.getName(), url: cur.getUrl(), moved: 0, left: false };
+  if (body.move) {
+    var r = movePrevPhotos_(cur);
+    out.moved = r.moved;
+    out.left = r.left;
+  }
+  return out;
+}
+
+/* 変更前の保存先にある写真（JPEG）を、現在の保存先へ移動する。40秒で区切り、残りがあれば left:true を返す */
+function movePrevPhotos_(dest) {
+  var prevId = PropertiesService.getScriptProperties().getProperty('PHOTO_FOLDER_PREV');
+  if (!prevId || prevId === dest.getId()) return { moved: 0, left: false };
+  var prev;
+  try { prev = DriveApp.getFolderById(prevId); } catch (e) { return { moved: 0, left: false }; }
+  var start = Date.now(), moved = 0;
+  var it = prev.getFilesByType('image/jpeg');
+  while (it.hasNext()) {
+    if (Date.now() - start > 40000) return { moved: moved, left: true };
+    it.next().moveTo(dest);
+    moved++;
+  }
+  // 移動中に一覧から漏れたものが無いか確かめる
+  return { moved: moved, left: prev.getFilesByType('image/jpeg').hasNext() };
+}
+
 function savePhoto_(dataUrl, name) {
   var parts = dataUrl.split(',');
   var bytes = Utilities.base64Decode(parts[1]);
   var blob = Utilities.newBlob(bytes, 'image/jpeg', name.replace(/[\\/:*?"<>|]/g, '_') + '.jpg');
-  var folders = DriveApp.getFoldersByName(PHOTO_FOLDER);
-  var folder = folders.hasNext() ? folders.next() : DriveApp.createFolder(PHOTO_FOLDER);
-  var file = folder.createFile(blob);
+  var file = photoFolder_().createFile(blob);
   // リンクを知っている人が閲覧できるようにする（写真を共有するため）。
   // 組織の共有ポリシーで設定できない場合も、写真の保存自体は成功させる
   try {
